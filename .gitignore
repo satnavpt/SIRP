@@ -4,4 +4,4 @@ dependency/hloc
 machine.file.*
 *.out
 LICENSE
-results/
+results/*
