@@ -1,0 +1,49 @@
+MODEL: 'PoseDiffusion'
+
+CHKPT: 'lib/models/posediffusion/chkpt/co3d_model_1.pth'
+
+MODEL_PARAMS:
+    _target_: lib.models.posediffusion.model.PoseDiffusionModel
+
+    pose_encoding_type: absT_quaR_logFL
+
+    IMAGE_FEATURE_EXTRACTOR: 
+        _target_: lib.models.posediffusion.model.MultiScaleImageFeatureExtractor
+        freeze: False
+
+    DENOISER: 
+        _target_: lib.models.posediffusion.model.Denoiser
+        TRANSFORMER:
+            _target_:               lib.models.posediffusion.model.TransformerEncoderWrapper
+            d_model:                512
+            nhead:                  4
+            dim_feedforward:        1024
+            num_encoder_layers:     8
+            dropout:                0.1
+            batch_first:            True
+            norm_first:             True
+
+
+    DIFFUSER:
+        _target_: lib.models.posediffusion.model.GaussianDiffusion
+        beta_schedule: custom
+
+GGS:
+    enable: True
+    start_step: 10
+    learning_rate: 0.01
+    iter_num: 100
+    sampson_max: 10
+    min_matches: 10
+    alpha: 0.0001
+
+DATASET:
+  HEIGHT: 224
+  WIDTH: 224
+
+POSE_SOLVER: 'Procrustes'
+DATASET:
+  ESTIMATED_DEPTH: 'dptkitti'
+  # SCENES: ['s00460']
+PROCRUSTES:
+  MAX_CORR_DIST: 0.05

@@ -1,0 +1,30 @@
+name: mapfree
+channels:
+  - pytorch
+  - conda-forge
+  - nvidia
+  - fvcore
+  - iopath
+  - pytorch3d
+  - defaults
+dependencies:
+  - python=3.9
+  - cudatoolkit=11.8
+  - pytorch=2.0.1
+  - torchvision
+  - fvcore
+  - iopath
+  - pytorch3d
+  - pip
+  - pip:
+      - opencv-python>=4.5.3
+      - open3d==0.14.1
+      - transforms3d
+      - yacs>=0.1.8
+      - h5py
+      - pytorch-lightning==1.6.5
+      - kornia==0.5.3
+      - hydra-core
+      - omegaconf
+      - einops
+      - visdom
