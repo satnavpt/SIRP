@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 from typing import Optional, List, Dict, Any
-from hloc import extract_features, logger, match_features, pairs_from_exhaustive, visualization, reconstruction
+from hloc import extract_features, logger, match_features, match_dense, pairs_from_exhaustive, visualization, reconstruction
 from hloc.triangulation import (
     import_features,
     import_matches,
@@ -47,6 +47,11 @@ def extract_match_memory(images = None, image_info = None):
             save_image(image, os.path.join(tmp_mapping, f"{i}.png"))
         matches, keypoints = run_hloc(tmpdir)
 
+    # print(matches)
+    # print(len(list(matches.values())[0]))
+    # print(keypoints)
+    # print(len(list(keypoints.values())[0]))
+    # print(len(list(keypoints.values())[1]))
     # From the format of colmap to PyTorch3D
     kp1, kp2, i12 = colmap_keypoint_to_pytorch3d(matches, keypoints, image_info)
 
@@ -93,6 +98,8 @@ def colmap_keypoint_to_pytorch3d(matches, keypoints, image_info):
         if pair_match is not None:
             kp1.append(keypoints[r_idx][pair_match[:, 0]])
             kp2.append(keypoints[q_idx][pair_match[:, 1]])
+            # print(keypoints[r_idx][pair_match[:, 0]])
+            # print(keypoints[q_idx][pair_match[:, 1]])
 
             i12_pair = np.array([[r_idx - 1, q_idx - 1]])
             i12.append(np.repeat(i12_pair, len(pair_match), axis=0))
@@ -103,6 +110,37 @@ def colmap_keypoint_to_pytorch3d(matches, keypoints, image_info):
         kp1 = kp2 = i12 = None
 
     return kp1, kp2, i12
+
+# def colmap_keypoint_to_opencv(matches, keypoints, image_info):
+#     kp1, kp2, i12 = [], [], []
+#     bbox_xyxy, scale = image_info["bboxes_xyxy"], image_info["resized_scales"]
+
+#     for idx in keypoints:
+#         # coordinate change from COLMAP to OpenCV
+#         cur_keypoint = keypoints[idx] - 0.5
+
+#         # go to the coordiante after cropping
+#         # use idx - 1 here because the COLMAP format starts from 1 instead of 0
+#         # cur_keypoint = cur_keypoint - [bbox_xyxy[idx - 1][0], bbox_xyxy[idx - 1][1]]
+#         # cur_keypoint = cur_keypoint * scale[idx - 1]
+#         # keypoints[idx] = cur_keypoint
+
+#     for (r_idx, q_idx), pair_match in matches.items():
+#         if pair_match is not None:
+#             kp1.append(keypoints[r_idx][pair_match[:, 0]])
+#             kp2.append(keypoints[q_idx][pair_match[:, 1]])
+#             # print(keypoints[r_idx][pair_match[:, 0]])
+#             # print(keypoints[q_idx][pair_match[:, 1]])
+
+#             i12_pair = np.array([[r_idx - 1, q_idx - 1]])
+#             i12.append(np.repeat(i12_pair, len(pair_match), axis=0))
+
+#     if kp1:
+#         kp1, kp2, i12 = map(np.concatenate, (kp1, kp2, i12), (0, 0, 0))
+#     else:
+#         kp1 = kp2 = i12 = None
+
+#     return kp1, kp2, i12
 
 
 def run_hloc(output_dir: str):
@@ -116,14 +154,15 @@ def run_hloc(output_dir: str):
     features = outputs / "features.h5"
     matches = outputs / "matches.h5"
 
-    feature_conf = extract_features.confs["disk"]  # or superpoint_inloc
-    matcher_conf = match_features.confs["disk+lightglue"]
+    feature_conf = extract_features.confs["superpoint_aachen"]  # or superpoint_inloc
+    matcher_conf = match_features.confs["superpoint+lightglue"]
 
     references = [p.relative_to(images).as_posix() for p in (images / "mapping/").iterdir()]
 
     feature_path = extract_features.main(feature_conf, images, image_list=references, feature_path=features)
     pairs_from_exhaustive.main(sfm_pairs, image_list=references)
     match_path = match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
+    # match_path = match_dense.main(matcher_conf, sfm_pairs, images, features=features, matches=matches)
 
     matches, keypoints = compute_matches_and_keypoints(
         sfm_dir, images, sfm_pairs, features, matches, image_list=references

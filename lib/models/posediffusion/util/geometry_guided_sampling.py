@@ -123,7 +123,7 @@ def GGS_optimize(
             if min_matches > 0:
                 valid_match_per_frame = len(valid_sampson) / batch_size
                 if valid_match_per_frame < min_matches:
-                    print("Drop this pair because of insufficient valid matches")
+                    print(f"Drop this pair because of insufficient valid matches ({len(valid_sampson)})")
                     break
 
             successful_GGS_count += 1
@@ -195,49 +195,3 @@ def compute_sampson_distance(
         sampson_to_print = sampson.detach().clone().mean()
 
     return sampson, sampson_to_print
-
-def compute_new_metric(
-    model_mean: torch.Tensor,
-    t: int,
-    processed_matches: Dict,
-    update_R=True,
-    update_T=True,
-    update_FL=True,
-    pose_encoding_type: str = "absT_quaR_logFL",
-    metric_max: int = 10,
-):
-    camera = pose_encoding_to_camera(model_mean, pose_encoding_type)
-
-    # pick the mean of the predicted focal length
-    camera.focal_length = camera.focal_length.mean(dim=0).repeat(len(camera.focal_length), 1)
-
-    if not update_R:
-        camera.R = camera.R.detach()
-
-    if not update_T:
-        camera.T = camera.T.detach()
-
-    if not update_FL:
-        camera.focal_length = camera.focal_length.detach()
-
-    kp1_homo, kp2_homo, i1, i2, he, wi, pair_idx = processed_matches.values()
-    F_2_to_1 = get_fundamental_matrices(camera, he, wi, i1, i2, l2_normalize_F=False)
-    F = F_2_to_1.permute(0, 2, 1)  # y1^T F y2 = 0
-
-    def _new_metric(F, kp1_homo, kp2_homo, pair_idx):
-        left = torch.bmm(kp1_homo[:, None], F[pair_idx])
-        right = torch.bmm(F[pair_idx], kp2_homo[..., None])
-
-        # bottom = left[:, :, 0].square() + left[:, :, 1].square() + right[:, 0, :].square() + right[:, 1, :].square()
-        algebraic = top = torch.bmm(left, kp2_homo[..., None]).square()
-
-        # sampson = top[:, 0] / bottom
-        # return sampson
-        return algebraic
-        
-    metric = _new_metric(F, kp1_homo.float(), kp2_homo.float(), pair_idx)
-
-    metric_to_print = metric.detach().clone().clamp(max=metric_max).mean()
-    metric = metric[metric < metric_max]
-
-    return metric, metric_to_print

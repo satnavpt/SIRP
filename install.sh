@@ -29,6 +29,7 @@ pip install visdom
 # conda install conda-forge::yacs
 
 git clone --recursive https://github.com/cvg/Hierarchical-Localization.git dependency/hloc
+git clone --recursive https://github.com/naver/dust3r.git dependency/dust3r
 cd dependency/hloc
 python -m pip install -e .
 cd ../../

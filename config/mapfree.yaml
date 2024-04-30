@@ -1,6 +1,6 @@
 DATASET:
   DATA_SOURCE: 'MapFree'
-  DATA_ROOT: '../rds/hpc-work/SIRP/datasets/mfl/'
+  DATA_ROOT: '../SIRP/datasets/mfl/'
   SCENES: None  # should be a list [] or None. If none, use all scenes.
   ESTIMATED_DEPTH: None  # To load estimated depth map, provide the suffix to the depth files, e.g. 'dptnyu', 'dptkiti'
   AUGMENTATION_TYPE: None

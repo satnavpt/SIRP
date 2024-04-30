@@ -39,7 +39,7 @@ class RandomConcatSampler(Sampler):
         self.repeat = repeat
         self.shuffle = shuffle
         self.seed = seed
-        self.reset_on_iter = reset_on_iter   # If true, recreate random seed to that samples are the same every epoch
+        self.reset_on_iter = reset_on_iter   # If true, recreate random seed so that samples are the same every epoch
         self.generator = torch.manual_seed(self.seed)
         assert self.repeat >= 1
 

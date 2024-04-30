@@ -254,7 +254,7 @@ class GaussianDiffusion(nn.Module):
         x_self_cond=None,
         clip_denoised=False,
         cond_fn=None,
-        cond_start_step=0,
+        disable_retry=False
     ):
         ################################################################################
         # from util.utils import seed_all_random_engines
@@ -267,15 +267,35 @@ class GaussianDiffusion(nn.Module):
             x=x, t=batched_times, z=z, x_self_cond=x_self_cond, clip_denoised=clip_denoised
         )
 
-        if cond_fn is not None and t < cond_start_step:
+        if cond_fn is not None:
             # print(model_mean[...,3:7].norm(dim=-1, keepdim=True))
             # tmp = model_mean.clone()
-            model_mean = cond_fn(model_mean, t)
+            if type(cond_fn) is list:
+                for fn, start_step in cond_fn:
+                    s, e = start_step
+                    if (t < s) and (t >= e):
+                        model_mean = fn(model_mean, t, disable_retry=disable_retry)
+            else:
+                fn, start_step = cond_fn
+                s, e = start_step
+                if (t < s) and (t >= e):
+                    model_mean = fn(model_mean, t, disable_retry=disable_retry)
             # diff_norm = torch.norm(tmp-model_mean)
             # print(f"the diff norm is {diff_norm}")
             noise = 0.0
         else:
             noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+
+        if (type(model_mean) is tuple):
+            if (t == 0):
+                model_mean, rescale_factor = model_mean
+                # print(model_mean)
+                model_mean[:, :3] /= rescale_factor
+                print(f"rescale: {rescale_factor}")
+                # print(model_mean)s
+            else:
+                model_mean, _ = model_mean
+
 
         pred = model_mean + (0.5 * model_log_variance).exp() * noise
 
@@ -290,24 +310,34 @@ class GaussianDiffusion(nn.Module):
             pose = torch.randn(shape, device=device)
         else:
             pose = init_pose
-            print(pose)
 
         x_start = None
 
-        pose_process = []
-        pose_process.append(pose.unsqueeze(0))
+        self.pose_process = []
+        self.pose_process.append(pose.unsqueeze(0))
 
         for t in reversed(range(0, self.num_timesteps)):
-            pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn, cond_start_step=cond_start_step)
+            self.start = t
+            pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn)
+            self.pose_process.append(pose.unsqueeze(0))
+
+        return pose, torch.cat(self.pose_process)
+
+    @torch.no_grad()
+    def sample(self, shape, z, cond_fn=None, init_pose=None):
+        # TODO: add more variants
+        sample_fn = self.p_sample_loop
+        return sample_fn(shape, z=z, cond_fn=cond_fn, init_pose=init_pose)
+
+    @torch.no_grad()
+    def continue_sample(self, pose_process, start, shape, z, cond_fn=None, init_pose=None):
+        print("disabling retries")
+        pose = pose_process[-1].squeeze(0)
+        for t in reversed(range(0, start)):
+            pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn, disable_retry=True)
             pose_process.append(pose.unsqueeze(0))
 
         return pose, torch.cat(pose_process)
-
-    @torch.no_grad()
-    def sample(self, shape, z, cond_fn=None, cond_start_step=0, init_pose=None):
-        # TODO: add more variants
-        sample_fn = self.p_sample_loop
-        return sample_fn(shape, z=z, cond_fn=cond_fn, cond_start_step=cond_start_step, init_pose=init_pose)
 
     def p_losses(self, x_start, t, z=None, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))

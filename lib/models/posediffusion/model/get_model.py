@@ -15,7 +15,7 @@ def getPoseDiffusionModel(cfg, checkpoint=None):
         device = torch.device("cpu")
     print(device)
 
-    model = instantiate(cfg.MODEL_PARAMS, POSE_SOLVER=cfg.POSE_SOLVER, PROCRUSTES=cfg.PROCRUSTES, MATCHING=cfg, GGS=cfg.GGS, _recursive_=False)
+    model = instantiate(cfg.MODEL_PARAMS, cfg=cfg, _recursive_=False)
 
     # original_cwd = get_original_cwd()
     # ckpt_path = os.path.join(original_cwd, checkpoint)

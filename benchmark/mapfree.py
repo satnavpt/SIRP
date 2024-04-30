@@ -188,8 +188,11 @@ def main(args):
     # print(all_results)
 
     output_metrics = aggregate_results(all_results, all_failures)
-    output_json = json.dumps(output_metrics, indent=2)
-    print(output_json)
+    # output_json = json.dumps(output_metrics, indent=2)
+    # print(output_json)
+        
+    with open(f"results/{str(args.submission_path).split('/')[1]}/results.txt", mode='w', encoding='utf-8') as f:
+        json.dump(output_metrics, f, ensure_ascii=False, indent=4)
 
 
 if __name__ == '__main__':

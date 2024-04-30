@@ -1,6 +1,25 @@
 import numpy as np
 import cv2 as cv
+import torch
+from ..posediffusion.util.load_img_folder import preprocess_images
+from ..posediffusion.util.match_extraction import extract_match_memory
 
+class HLOCMatching:
+    def __init__(self, cfg):
+        pass
+
+    def get_correspondences(self, data):
+        r = data['image0']
+        q = data['image1']
+
+        images = torch.cat((r, q), dim=0)
+        images, image_info = preprocess_images(images)
+        kp1, kp2, i12 = extract_match_memory(images=images, image_info=image_info)
+
+        if kp1 is not None:
+            return kp1, kp2
+        else:
+            return [], []
 
 class PrecomputedMatching:
     '''Get correspondences from pre-computed file'''

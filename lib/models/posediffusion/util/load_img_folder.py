@@ -30,7 +30,7 @@ def preprocess_images(images, image_size: int = None, mode: str = "bilinear"):
                 align_corners=False if mode == "bilinear" else None,
             )[0]
         else:
-            print("no resizing")
+            # print("no resizing")
             imre = image
             minscale = 1.
 
@@ -42,8 +42,9 @@ def preprocess_images(images, image_size: int = None, mode: str = "bilinear"):
 
     # assume all the images have the same shape for GGS
     image_info = {"size": (min_hw, min_hw), "bboxes_xyxy": np.stack(bboxes_xyxy), "resized_scales": np.stack(scales)}
-    print("image size: ", end="")
-    print(torch.tensor(image_info['size']) * image_info['resized_scales'])
+    # print("image size: ", end="")
+    # print(torch.tensor(image_info['size']) * image_info['resized_scales'])
+    # print(image_info)
     return images_tensor, image_info
 
 def load_and_preprocess_images(folder_path  = None, image_size: int = None, image_paths = None, mode: str = "bilinear") -> torch.Tensor:
@@ -99,7 +100,7 @@ def _load_image(path) -> np.ndarray:
 
 def _center_crop_square_tensor(image: torch.tensor) -> torch.tensor:
     h, w = image.shape[1:]
-    min_dim = 224#min(h, w)
+    min_dim = min(h, w)
     top = (h - min_dim) // 2
     left = (w - min_dim) // 2
     cropped_image = image[:, top : top + min_dim, left : left + min_dim]

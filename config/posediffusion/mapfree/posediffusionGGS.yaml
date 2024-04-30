@@ -1,4 +1,5 @@
 MODEL: 'PoseDiffusion'
+image_size: 224
 
 CHKPT: 'lib/models/posediffusion/chkpt/co3d_model_1.pth'
 
@@ -33,10 +34,8 @@ GGS:
     start_step: 10
     learning_rate: 0.01
     iter_num: 100
-    sampson_max: 50
-    min_matches: 2
-    alpha: 0.01
+    sampson_max: 10
+    min_matches: 10
+    alpha: 0.0001
 
-DATASET:
-  HEIGHT: 224
-  WIDTH: 224
+MATCHES_FILE_PATH: '{scene_root}/correspondences_SG.npz'

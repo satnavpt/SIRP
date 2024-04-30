@@ -31,6 +31,21 @@ _CN.MODEL_PARAMS.DIFFUSER = CN()
 _CN.MODEL_PARAMS.DIFFUSER._target_ = None
 _CN.MODEL_PARAMS.DIFFUSER.beta_schedule = None
 
+_CN.PGS = CN()
+_CN.PGS.enable = None
+_CN.PGS.r_weight = None
+_CN.PGS.t_weight = None
+_CN.PGS.f_weight = None
+
+_CN.PGS3D = CN()
+_CN.PGS3D.enable = None
+
+_CN.INIT_POSE = CN()
+_CN.INIT_POSE.enable = None
+
+_CN.DIFF_CONF = CN()
+_CN.DIFF_CONF.enable = None
+
 _CN.GGS = CN()
 _CN.GGS.enable = None
 _CN.GGS.start_step = None
@@ -39,6 +54,12 @@ _CN.GGS.iter_num = None
 _CN.GGS.sampson_max = None
 _CN.GGS.min_matches = None
 _CN.GGS.alpha = None
+
+_CN.GT_ALIGN = CN()
+_CN.GT_ALIGN.enable = None
+
+_CN.POSE_ALIGN = CN()
+_CN.POSE_ALIGN.enable = None
 
 
 # Regression model options

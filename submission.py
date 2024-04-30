@@ -44,12 +44,18 @@ def predict(loader, model, output_root):
         f.write(f"{data['pair_names'][0][0]} ")
         f.write(f"{data['pair_names'][1][0]}\n")
         f.close()
-        print(data['scene_id'][0])
-        print(data['pair_names'][0][0])
-        print(data['pair_names'][1][0])
+        scene_id = data['scene_id'][0]
+        print(scene_id)
+        # print(data['pair_names'][0][0])
+        q_frame = data['pair_names'][1][0]
+        print(q_frame)
+        selected_scenes = ['s00473']
+        selected_frames = ['seq1/frame_00045.jpg']
+        if (scene_id not in selected_scenes) or (q_frame not in selected_frames):
+            continue
         data = data_to_model_device(data, model)
         with torch.no_grad():
-            R, t = model(data)
+            R, t, c = model(data)
         R = R.detach().cpu().numpy()
         t = t.reshape(-1).detach().cpu().numpy()
         inliers = data['inliers']
@@ -64,10 +70,10 @@ def predict(loader, model, output_root):
         estimated_pose = Pose(image_name=query_img,
                               q=mat2quat(R).reshape(-1),
                               t=t.reshape(-1),
-                              inliers=inliers)
+                              inliers=c)
         results_dict[scene].append(estimated_pose)
-        print("final output")
-        print(estimated_pose)
+        # print("final output")
+        # print(estimated_pose)
 
     return results_dict
 
