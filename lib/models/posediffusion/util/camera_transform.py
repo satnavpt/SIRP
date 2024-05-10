@@ -154,7 +154,7 @@ def get_cropped_images(data, resize):
     images = []
     for im in ['image0', 'image1']:
         image = (data[im][0].clone() * 255).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        image = cv2.resize(image, dsize=(224, 224))
+        image = cv2.resize(image, dsize=resize)
         image = torch.from_numpy(image).float().permute(2, 0, 1) / 255
         images.append(image.unsqueeze(0).to(data[im][0].device))
 
@@ -391,6 +391,7 @@ def pose_encoding_to_camera(
         # log_focal_length_bias was the hyperparameter
         # to ensure the mean of logFL close to 0 during training
         # Now converted back
+
         focal_length = (log_focal_length + log_focal_length_bias).exp()
 
         # clamp to avoid weird fl values
@@ -461,7 +462,9 @@ def pose_encoding_to_visdom(
         # log_focal_length_bias was the hyperparameter
         # to ensure the mean of logFL close to 0 during training
         # Now converted back
+
         focal_length = (log_focal_length + log_focal_length_bias).exp()
+
 
         # clamp to avoid weird fl values
         focal_length = torch.clamp(focal_length, min=min_focal_length, max=max_focal_length)
@@ -492,10 +495,12 @@ def camera_to_pose_encoding(
         quaternion_R = matrix_to_quaternion(r)
 
         # Calculate log_focal_length
+        # print(f"test1: {camera.focal_length}")
         log_focal_length = (
             torch.log(torch.clamp(camera.focal_length, min=min_focal_length, max=max_focal_length))
             - log_focal_length_bias
         )
+        # print(f"test2: {log_focal_length}")
 
         # Concatenate to form pose_encoding
         pose_encoding = torch.cat([t, quaternion_R, log_focal_length], dim=-1)

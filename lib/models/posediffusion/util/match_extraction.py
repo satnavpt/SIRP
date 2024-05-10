@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from omegaconf import OmegaConf
 
 import numpy as np
 import pycolmap
@@ -35,6 +36,9 @@ import pycolmap
 import matplotlib.pyplot as plt
 from torchvision.utils import save_image
 
+from gluefactory.eval.io import parse_config_path, load_model
+from gluefactory.utils.export_predictions import export_predictions_from_memory
+
 
 def extract_match_memory(images = None, image_info = None):
     # Now only supports SPSG
@@ -56,6 +60,14 @@ def extract_match_memory(images = None, image_info = None):
     kp1, kp2, i12 = colmap_keypoint_to_pytorch3d(matches, keypoints, image_info)
 
     return kp1, kp2, i12
+
+def extract_match_memory_glue(data=None):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_mapping = os.path.join(tmpdir, "mapping")
+        os.makedirs(tmp_mapping)
+    matched_points0, matched_points1, matched_lines0, matched_lines1 = run_gluefactory(data, tmpdir)
+
+    return matched_points0, matched_points1, matched_lines0, matched_lines1
 
 def extract_match(image_paths = None, image_folder_path = None, image_info = None):
     # Now only supports SPSG
@@ -175,54 +187,93 @@ def run_hloc(output_dir: str):
 
     return matches, keypoints
 
+def get_gluestick_conf():
+    configs_path = "configs/"
+    conf_path = parse_config_path("superpoint+lsd+gluestick", configs_path)
+    conf = OmegaConf.load(conf_path)
+    return conf
 
-def visualise_sfm_2d(reconstruction, image_dir, color_by='visibility', selected=[], n=1, seed=0, dpi=75):
-    assert image_dir.exists()
-    if not isinstance(reconstruction, pycolmap.Reconstruction):
-        reconstruction = pycolmap.Reconstruction(reconstruction)
+def run_gluefactory(data, output_dir: str):
+    outputs = Path(os.path.join(output_dir, "output"))
+    pred_file = outputs / "predictions.h5"
+    # default_conf = OmegaConf.create(default_conf)
+    conf = get_gluestick_conf()
+    # conf = OmegaConf.merge(default_conf, selected_conf)
+    model = load_model(conf.model, None)
+    lines0, lines1, line_matches0, keypoints0, keypoints1, matches0 = export_predictions_from_memory(
+        data,
+        model,
+        pred_file,
+        # keys=self.export_keys,
+        # optional_keys=self.optional_export_keys,
+    )
 
-    if not selected:
-        image_ids = reconstruction.reg_image_ids()
-        selected = random.Random(seed).sample(
-                image_ids, min(n, len(image_ids)))
+    matched_lines0 = []
+    matched_lines1 = []
 
-    c = 0
-    for i in selected:
-        image = reconstruction.images[i]
-        keypoints = np.array([p.xy for p in image.points2D])
-        visible = np.array([p.has_point3D() for p in image.points2D])
+    matched_points0 = []
+    matched_points1 = []
 
-        if color_by == 'visibility':
-            color = [(0, 0, 1) if v else (1, 0, 0) for v in visible]
-            text = f'visible: {np.count_nonzero(visible)}/{len(visible)}'
-        elif color_by == 'track_length':
-            tl = np.array([reconstruction.points3D[p.point3D_id].track.length()
-                           if p.has_point3D() else 1 for p in image.points2D])
-            max_, med_ = np.max(tl), np.median(tl[tl > 1])
-            tl = np.log(tl)
-            color = cm.jet(tl / tl.max()).tolist()
-            text = f'max/median track length: {max_}/{med_}'
-        elif color_by == 'depth':
-            p3ids = [p.point3D_id for p in image.points2D if p.has_point3D()]
-            z = np.array([image.transform_to_image(
-                reconstruction.points3D[j].xyz)[-1] for j in p3ids])
-            z -= z.min()
-            color = cm.jet(z / np.percentile(z, 99.9))
-            text = f'visible: {np.count_nonzero(visible)}/{len(visible)}'
-            keypoints = keypoints[visible]
-        else:
-            raise NotImplementedError(f'Coloring not implemented: {color_by}.')
+    for i, line in enumerate(lines0):
+        if line_matches0[i] > -1:
+            matched_lines0.append(line)
+            matched_lines1.append(lines1[line_matches0[i]])
 
-        name = image.name
-        plot_images([read_image(image_dir / name)], dpi=dpi)
-        plot_keypoints([keypoints], colors=[color], ps=4)
-        add_text(0, text)
-        add_text(0, name, pos=(0.01, 0.01), fs=5, lcolor=None, va='bottom')
+    for i, point in enumerate(keypoints0):
+        if matches0[i] > -1:
+            matched_points0.append(point)
+            matched_points1.append(keypoints1[matches0[i]])
 
-        # fig = plt.gcf()
-        # print(os.getcwd())
-        plt.savefig(f'fig_{c}.png')
-        c += 1
+    return matched_points0, matched_points1, matched_lines0, matched_lines1
+
+
+# def visualise_sfm_2d(reconstruction, image_dir, color_by='visibility', selected=[], n=1, seed=0, dpi=75):
+#     assert image_dir.exists()
+#     if not isinstance(reconstruction, pycolmap.Reconstruction):
+#         reconstruction = pycolmap.Reconstruction(reconstruction)
+
+#     if not selected:
+#         image_ids = reconstruction.reg_image_ids()
+#         selected = random.Random(seed).sample(
+#                 image_ids, min(n, len(image_ids)))
+
+#     c = 0
+#     for i in selected:
+#         image = reconstruction.images[i]
+#         keypoints = np.array([p.xy for p in image.points2D])
+#         visible = np.array([p.has_point3D() for p in image.points2D])
+
+#         if color_by == 'visibility':
+#             color = [(0, 0, 1) if v else (1, 0, 0) for v in visible]
+#             text = f'visible: {np.count_nonzero(visible)}/{len(visible)}'
+#         elif color_by == 'track_length':
+#             tl = np.array([reconstruction.points3D[p.point3D_id].track.length()
+#                            if p.has_point3D() else 1 for p in image.points2D])
+#             max_, med_ = np.max(tl), np.median(tl[tl > 1])
+#             tl = np.log(tl)
+#             color = cm.jet(tl / tl.max()).tolist()
+#             text = f'max/median track length: {max_}/{med_}'
+#         elif color_by == 'depth':
+#             p3ids = [p.point3D_id for p in image.points2D if p.has_point3D()]
+#             z = np.array([image.transform_to_image(
+#                 reconstruction.points3D[j].xyz)[-1] for j in p3ids])
+#             z -= z.min()
+#             color = cm.jet(z / np.percentile(z, 99.9))
+#             text = f'visible: {np.count_nonzero(visible)}/{len(visible)}'
+#             keypoints = keypoints[visible]
+#         else:
+#             raise NotImplementedError(f'Coloring not implemented: {color_by}.')
+
+#         name = image.name
+#         plot_images([read_image(image_dir / name)], dpi=dpi)
+#         plot_keypoints([keypoints], colors=[color], ps=4)
+#         add_text(0, text)
+#         add_text(0, name, pos=(0.01, 0.01), fs=5, lcolor=None, va='bottom')
+
+#         # fig = plt.gcf()
+#         # print(os.getcwd())
+#         plt.savefig(f'fig_{c}.png')
+#         c += 1
 
 
 def compute_matches_and_keypoints(

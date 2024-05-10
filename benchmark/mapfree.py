@@ -22,6 +22,7 @@ def compute_scene_metrics(dataset_path: Path, submission_zip: ZipFile, scene: st
         K, W, H = load_K(dataset_path / scene / 'intrinsics.txt')
         with (dataset_path / scene / 'poses.txt').open('r', encoding='utf-8') as gt_poses_file:
             gt_poses = load_poses(gt_poses_file, load_confidence=False)
+
     except FileNotFoundError as e:
         logging.error(f'Could not find ground-truth dataset files: {e}')
         raise
@@ -64,7 +65,6 @@ def compute_scene_metrics(dataset_path: Path, submission_zip: ZipFile, scene: st
         if frame_num not in estimated_poses:
             failures += 1
             continue
-
         q_est, t_est, confidence = estimated_poses[frame_num]
         inputs = Inputs(q_gt=q_gt, t_gt=t_gt, q_est=q_est, t_est=t_est,
                         confidence=confidence, K=K[frame_num], W=W, H=H)
@@ -77,21 +77,30 @@ def compute_scene_metrics(dataset_path: Path, submission_zip: ZipFile, scene: st
 def argmedian(x):
   return np.argpartition(x, len(x) // 2)[len(x) // 2]
 
-def aggregate_results(all_results, all_failures):
+def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_cutoff=0):
     # aggregate metrics
 
-    # f = open('results/posediffusionGGSCROP224/detailed_res.txt', mode='w')
+    f = open('results/posediffusionPGS3D_FLIP/detailed_res.txt', mode='w')
 
     per_scene_medians = defaultdict(list)
     for k,v in all_results.items():
-        # for i, row in enumerate(zip(*v.values())):
-            # f.write(f"{k},seq0/frame_00000.jpg,seq1/frame_{i:05}.jpg,{row[0]},{row[1]},{row[2]}\n")
-        r = defaultdict(list)
-        for k1,v1 in v.items():
-            r[k1] = (argmedian(v1), np.median(v1))
-        per_scene_medians[k] = r
+        for i, row in enumerate(zip(*v.values())):
+            # print(f"{k},seq0/frame_00000.jpg,seq1/frame_{i:05}.jpg,{row[0]},{row[1]},{row[2]}\n")
+            f.write(f"{k},seq0/frame_00000.jpg,seq1/frame_{(i*5):05}.jpg,{row[0]},{row[1]},{row[2]}\n")
+        # print(1)
+        # r = defaultdict(list)
+        # print(2)
+        # for k1,v1 in v.items():
+        #     print(3)
+        #     r[k1] = (argmedian(v1), np.median(v1))
+        #     print(4)
+        # print(5)
+        # per_scene_medians[k] = r
+        # print(6)
+        # print(v)
         # per_scene_medians[k] = np.median(v)
-    # f.close()
+        # print(7)
+    f.close()
 
     # for scene in per_scene_medians.keys():
     #     print(scene, end=", ")
@@ -108,9 +117,14 @@ def aggregate_results(all_results, all_failures):
     median_metrics = defaultdict(list)
     all_metrics = defaultdict(list)
     for scene_results in all_results.values():
+        rot_mask = np.array(scene_results["difficulty_rot"]) > rot_diff_cutoff
+        trans_mask = np.array(scene_results["difficulty_trans"]) > trans_diff_cutoff
+        mask = rot_mask & trans_mask
         for metric, values in scene_results.items():
-            median_metrics[metric].append(np.median(values))
-            all_metrics[metric].extend(values)
+            values = np.array(values)[mask]
+            if len(values) > 0:
+                median_metrics[metric].append(np.median(values))
+                all_metrics[metric].extend(values)
     all_metrics = {k: np.array(v) for k, v in all_metrics.items()}
     assert all([v.ndim == 1 for v in all_metrics.values()]
                ), 'invalid metrics shape'
@@ -145,7 +159,6 @@ def aggregate_results(all_results, all_failures):
     output_metrics[f'AUC @ VCRE < {config.vcre_threshold}px'] = auc_vcre
     output_metrics[f'Estimates for % of frames'] = len(all_metrics['trans_err']) / total_samples
     return output_metrics
-
 
 def count_unexpected_scenes(scenes: tuple, submission_zip: ZipFile):
     submission_scenes = [fname[5:-4]
@@ -186,12 +199,16 @@ def main(args):
         return
 
     # print(all_results)
-
-    output_metrics = aggregate_results(all_results, all_failures)
+    rot_diff_cutoff = args.rotcutoff
+    output_metrics = aggregate_results(all_results, all_failures, rot_diff_cutoff=rot_diff_cutoff)
     # output_json = json.dumps(output_metrics, indent=2)
     # print(output_json)
+
+    name = "results"
+    if rot_diff_cutoff:
+        name += str(rot_diff_cutoff)
         
-    with open(f"results/{str(args.submission_path).split('/')[1]}/results.txt", mode='w', encoding='utf-8') as f:
+    with open(f"results/{str(args.submission_path).split('/')[1]}/{name}.txt", mode='w', encoding='utf-8') as f:
         json.dump(output_metrics, f, ensure_ascii=False, indent=4)
 
 
@@ -206,6 +223,7 @@ if __name__ == '__main__':
                         default='warning', help='Logging level. Default: warning')
     parser.add_argument('--dataset_path', type=Path, default=None,
                         help='Path to the dataset folder')
+    parser.add_argument('--rotcutoff', type=float, default=0)
 
     args = parser.parse_args()
 
@@ -216,5 +234,6 @@ if __name__ == '__main__':
     logging.basicConfig(level=args.log.upper())
     try:
         main(args)
-    except Exception:
+    except Exception as e:
+        print(e)
         logging.error("Unexpected behaviour. Exiting.")

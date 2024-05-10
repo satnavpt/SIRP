@@ -302,7 +302,7 @@ class GaussianDiffusion(nn.Module):
         return pred, x_start
 
     @torch.no_grad()
-    def p_sample_loop(self, shape, z: torch.Tensor, cond_fn=None, cond_start_step=0, init_pose=None):
+    def p_sample_loop(self, shape, z: torch.Tensor, cond_fn=None, cond_start_step=0, init_pose=None, gt_fl=None):
         batch, device = shape[0], self.betas.device
 
         # Init here
@@ -310,6 +310,10 @@ class GaussianDiffusion(nn.Module):
             pose = torch.randn(shape, device=device)
         else:
             pose = init_pose
+
+        if gt_fl is not None:
+            pose[:, :, 7:9] = gt_fl
+
 
         x_start = None
 
@@ -319,15 +323,17 @@ class GaussianDiffusion(nn.Module):
         for t in reversed(range(0, self.num_timesteps)):
             self.start = t
             pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn)
+            if gt_fl is not None:
+                pose[:, :, 7:9] = gt_fl
             self.pose_process.append(pose.unsqueeze(0))
 
         return pose, torch.cat(self.pose_process)
 
     @torch.no_grad()
-    def sample(self, shape, z, cond_fn=None, init_pose=None):
+    def sample(self, shape, z, cond_fn=None, init_pose=None, gt_fl=None):
         # TODO: add more variants
         sample_fn = self.p_sample_loop
-        return sample_fn(shape, z=z, cond_fn=cond_fn, init_pose=init_pose)
+        return sample_fn(shape, z=z, cond_fn=cond_fn, init_pose=init_pose, gt_fl=gt_fl)
 
     @torch.no_grad()
     def continue_sample(self, pose_process, start, shape, z, cond_fn=None, init_pose=None):

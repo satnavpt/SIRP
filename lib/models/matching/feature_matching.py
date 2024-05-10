@@ -2,7 +2,7 @@ import numpy as np
 import cv2 as cv
 import torch
 from ..posediffusion.util.load_img_folder import preprocess_images
-from ..posediffusion.util.match_extraction import extract_match_memory
+from ..posediffusion.util.match_extraction import extract_match_memory, extract_match_memory_glue
 
 class HLOCMatching:
     def __init__(self, cfg):
@@ -20,6 +20,51 @@ class HLOCMatching:
             return kp1, kp2
         else:
             return [], []
+
+class GLUEMatching:
+    def __init__(self, cfg):
+        pass
+
+    def get_correspondences(self, data):
+        r = data['image0']
+        q = data['image1']
+
+        matcher_data = {
+            "name": ["im0_im1"],
+            "view0": {
+                "name": "im0",
+                "image": data['image0'],
+                "scales": torch.tensor(np.array([1.0, 1]).astype(np.float32))
+            },
+            "view1": {
+                "name":"im1",
+                "image":data["image1"],
+                "scales": torch.tensor(np.array([1.0, 1]).astype(np.float32))
+            }
+        }
+
+        # self.data += [
+        #     {
+        #         "view0": {
+        #             "name": names[i][:-4],
+        #             "img_path": str(Path(img_folder, names[i])),
+        #             "depth_path": str(Path(depth_folder, names[i][:-4]))
+        #             + depth_ext,
+        #             "camera": cameras[name_to_cam_idx[names[i]]["dist_camera_idx"]],
+        #             "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[i]]),
+        #         },
+        #         "view1": {
+        #             "name": names[j][:-4],
+        #             "img_path": str(Path(img_folder, names[j])),
+        #             "depth_path": str(Path(depth_folder, names[j][:-4]))
+        #             + depth_ext,
+        #             "camera": cameras[name_to_cam_idx[names[j]]["dist_camera_idx"]],
+        #             "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[j]]),
+        #         },}]
+
+        kp1, kp2, li1, li2 = extract_match_memory_glue(data=matcher_data)
+
+        return kp1, kp2, li1, li2
 
 class PrecomputedMatching:
     '''Get correspondences from pre-computed file'''

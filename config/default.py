@@ -40,6 +40,9 @@ _CN.PGS.f_weight = None
 _CN.PGS3D = CN()
 _CN.PGS3D.enable = None
 
+_CN.LGS = CN()
+_CN.LGS.enable = None
+
 _CN.INIT_POSE = CN()
 _CN.INIT_POSE.enable = None
 

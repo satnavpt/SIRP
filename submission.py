@@ -49,21 +49,135 @@ def predict(loader, model, output_root):
         # print(data['pair_names'][0][0])
         q_frame = data['pair_names'][1][0]
         print(q_frame)
-        selected_scenes = ['s00473']
-        selected_frames = ['seq1/frame_00045.jpg']
-        if (scene_id not in selected_scenes) or (q_frame not in selected_frames):
-            continue
+        """selected_frames = [('s00523', 'seq1/frame_00000.jpg'),
+            ('s00485', 'seq1/frame_00055.jpg'),
+            ('s00505', 'seq1/frame_00305.jpg'),
+            ('s00485', 'seq1/frame_00015.jpg'),
+            ('s00485', 'seq1/frame_00005.jpg'),
+            ('s00505', 'seq1/frame_00495.jpg'),
+            ('s00514', 'seq1/frame_00455.jpg'),
+            ('s00517', 'seq1/frame_00335.jpg'),
+            ('s00492', 'seq1/frame_00200.jpg'),
+            ('s00504', 'seq1/frame_00185.jpg'),
+            ('s00520', 'seq1/frame_00055.jpg'),
+            ('s00492', 'seq1/frame_00415.jpg'),
+            ('s00472', 'seq1/frame_00520.jpg'),
+            ('s00461', 'seq1/frame_00415.jpg'),
+            ('s00515', 'seq1/frame_00455.jpg'),
+            ('s00484', 'seq1/frame_00390.jpg'),
+            ('s00485', 'seq1/frame_00045.jpg'),
+            ('s00514', 'seq1/frame_00460.jpg'),
+            ('s00515', 'seq1/frame_00520.jpg'),
+            ('s00504', 'seq1/frame_00125.jpg'),
+            ('s00504', 'seq1/frame_00015.jpg'),
+            ('s00503', 'seq1/frame_00065.jpg'),
+            ('s00506', 'seq1/frame_00320.jpg'),
+            ('s00462', 'seq1/frame_00325.jpg'),
+            ('s00492', 'seq1/frame_00145.jpg'),
+            ('s00505', 'seq1/frame_00320.jpg'),
+            ('s00509', 'seq1/frame_00075.jpg'),
+            ('s00517', 'seq1/frame_00110.jpg'),
+            ('s00505', 'seq1/frame_00350.jpg'),
+            ('s00484', 'seq1/frame_00245.jpg'),
+            ('s00515', 'seq1/frame_00480.jpg'),
+            ('s00492', 'seq1/frame_00105.jpg'),
+            ('s00465', 'seq1/frame_00555.jpg'),
+            ('s00465', 'seq1/frame_00260.jpg'),
+            ('s00509', 'seq1/frame_00030.jpg'),
+            ('s00484', 'seq1/frame_00525.jpg'),
+            ('s00472', 'seq1/frame_00425.jpg'),
+            ('s00504', 'seq1/frame_00200.jpg'),
+            ('s00491', 'seq1/frame_00405.jpg'),
+            ('s00519', 'seq1/frame_00100.jpg'),
+            ('s00480', 'seq1/frame_00035.jpg'),
+            ('s00515', 'seq1/frame_00535.jpg'),
+            ('s00461', 'seq1/frame_00390.jpg'),
+            ('s00492', 'seq1/frame_00315.jpg'),
+            ('s00515', 'seq1/frame_00490.jpg'),
+            ('s00515', 'seq1/frame_00485.jpg'),
+            ('s00504', 'seq1/frame_00005.jpg'),
+            ('s00472', 'seq1/frame_00310.jpg'),
+            ('s00491', 'seq1/frame_00355.jpg'),
+            ('s00517', 'seq1/frame_00410.jpg'),
+            ('s00479', 'seq1/frame_00040.jpg'),
+            ('s00461', 'seq1/frame_00450.jpg'),
+            ('s00492', 'seq1/frame_00365.jpg'),
+            ('s00492', 'seq1/frame_00280.jpg'),
+            ('s00484', 'seq1/frame_00295.jpg'),
+            ('s00472', 'seq1/frame_00450.jpg'),
+            ('s00515', 'seq1/frame_00255.jpg'),
+            ('s00520', 'seq1/frame_00070.jpg'),
+            ('s00492', 'seq1/frame_00255.jpg'),
+            ('s00479', 'seq1/frame_00045.jpg'),
+            ('s00479', 'seq1/frame_00055.jpg'),
+            ('s00510', 'seq1/frame_00315.jpg'),
+            ('s00463', 'seq1/frame_00010.jpg'),
+            ('s00511', 'seq1/frame_00525.jpg'),
+            ('s00505', 'seq1/frame_00360.jpg'),
+            ('s00472', 'seq1/frame_00365.jpg'),
+            ('s00472', 'seq1/frame_00420.jpg'),
+            ('s00485', 'seq1/frame_00065.jpg'),
+            ('s00461', 'seq1/frame_00380.jpg'),
+            ('s00479', 'seq1/frame_00035.jpg'),
+            ('s00480', 'seq1/frame_00070.jpg'),
+            ('s00465', 'seq1/frame_00475.jpg'),
+            ('s00503', 'seq1/frame_00060.jpg'),
+            ('s00466', 'seq1/frame_00340.jpg'),
+            ('s00515', 'seq1/frame_00525.jpg'),
+            ('s00484', 'seq1/frame_00545.jpg'),
+            ('s00468', 'seq1/frame_00375.jpg'),
+            ('s00492', 'seq1/frame_00140.jpg'),
+            ('s00510', 'seq1/frame_00350.jpg'),
+            ('s00504', 'seq1/frame_00065.jpg'),
+            ('s00504', 'seq1/frame_00000.jpg'),
+            ('s00510', 'seq1/frame_00235.jpg'),
+            ('s00517', 'seq1/frame_00320.jpg'),
+            ('s00479', 'seq1/frame_00015.jpg'),
+            ('s00484', 'seq1/frame_00500.jpg'),
+            ('s00474', 'seq1/frame_00405.jpg'),
+            ('s00479', 'seq1/frame_00070.jpg'),
+            ('s00465', 'seq1/frame_00160.jpg'),
+            ('s00499', 'seq1/frame_00065.jpg'),
+            ('s00523', 'seq1/frame_00025.jpg'),
+            ('s00494', 'seq1/frame_00370.jpg'),
+            ('s00510', 'seq1/frame_00280.jpg'),
+            ('s00515', 'seq1/frame_00460.jpg'),
+            ('s00514', 'seq1/frame_00415.jpg'),
+            ('s00504', 'seq1/frame_00230.jpg'),
+            ('s00462', 'seq1/frame_00565.jpg'),
+            ('s00461', 'seq1/frame_00485.jpg'),
+            ('s00474', 'seq1/frame_00385.jpg'),
+            ('s00517', 'seq1/frame_00290.jpg'),
+            ('s00497', 'seq1/frame_00465.jpg')]
+        """
+        selected_frames = [('s00523', 'seq1/frame_00000.jpg')]
+        # if (scene_id, q_frame) not in selected_frames:
+        #     continue
         data = data_to_model_device(data, model)
         with torch.no_grad():
-            R, t, c = model(data)
+            results = model(data)
+            if len(results) == 3:
+                R, t, c = results
+            else:
+                R, t = results
+                c = None
+
+        # ignore frames without poses (e.g. not enough feature matches)
+        if (R is None) or (t is None):
+            print("NO ESTIMATE!")
+            continue
+
         R = R.detach().cpu().numpy()
         t = t.reshape(-1).detach().cpu().numpy()
         inliers = data['inliers']
         scene = data['scene_id'][0]
         query_img = data['pair_names'][1][0]
+        if c is None and inliers is not None:
+            c = inliers
 
         # ignore frames without poses (e.g. not enough feature matches)
-        if np.isnan(R).any() or np.isnan(t).any() or np.isinf(t).any():
+        if np.isnan(R).any() or np.isnan(t).any() or np.isinf(t).any() or c==-1:
+            print("NO ESTIMATE!")
             continue
 
         # populate results_dict

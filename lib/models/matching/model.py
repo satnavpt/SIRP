@@ -14,6 +14,8 @@ class FeatureMatchingModel(torch.nn.Module):
             self.feature_matching = PrecomputedMatching(cfg)
         elif cfg.FEATURE_MATCHING == "HLOC":
             self.feature_matching = HLOCMatching(cfg)
+        elif cfg.FEATURE_MATCHING == "GLUE":
+            self.feature_matching = GLUEMatching(cfg)
         elif cfg.FEATURE_MATCHING == "DUST3R":
             self.feature_matching = None
         else:
@@ -38,6 +40,9 @@ class FeatureMatchingModel(torch.nn.Module):
         assert data['depth0'].shape[0] == 1, 'Baseline models require batch size of 1'
 
         # get 2D-2D correspondences
+        if isinstance(self.feature_matching, GLUEMatching):
+            pts1, pts2, lin1, lin2 = self.feature_matching.get_correspondences(data)
+            raise Exception("dsgjhgdfghdfiuh")
         if self.feature_matching is not None:
             pts1, pts2 = self.feature_matching.get_correspondences(data)
 
