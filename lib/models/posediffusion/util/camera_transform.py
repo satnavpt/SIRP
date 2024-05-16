@@ -53,43 +53,51 @@ def transform_to_extrinsics(t):
     ro = t[:3, :3]
     return tr, ro
 
+def convert_data_to_camera_intrinsics(data):
+    images = torch.cat((data['image0'].clone(), data['image0'].clone()))
+    K = torch.cat((data['K_color0'].clone(), data['K_color1'].clone())).to(dtype=torch.float32)
+    fl = torch.stack((K[:, 0, 0], K[:, 1, 1])).T.to(dtype=torch.float32)
+    pp = torch.stack((K[:, 0, 2], K[:, 1, 2])).T.to(dtype=torch.float32)
+    shape = torch.from_numpy(np.array([images.shape[2], images.shape[3]])).to(device=K.device, dtype=torch.float32)
+
+    image_size = shape = torch.cat((shape.unsqueeze(0), shape.unsqueeze(0)))
+
+    shape = shape.flip(dims=(1,))
+    
+    scale = shape.min(dim=1, keepdim=True)[0] / 2.0
+    scale = scale.expand(-1, 2)
+    c0 = shape / 2.0
+
+    focal_length = torch.stack([K[:, 0, 0], K[:, 1, 1]], dim=-1)
+    principal_point = K[:, :2, 2]
+    focal_pytorch3d = focal_length / scale
+    p0_pytorch3d = -(principal_point - c0) / scale
+
+    return focal_pytorch3d
+
+    # return PerspectiveCameras(
+    #     R=R_pytorch3d,
+    #     T=T_pytorch3d,
+    #     focal_length=focal_pytorch3d,
+    #     principal_point=p0_pytorch3d,
+    #     image_size=image_size,
+    #     device=K.device,
+    # )
+
 def convert_data_to_perspective_camera(data):
     m = data['T_0to1'][0].clone()
     tr = m[:3, 3].permute(*torch.arange(m[:3, 3].ndim - 1, -1, -1)).unsqueeze(0)
-
-    # ro = m[:3, :3]
 
     images = torch.cat((data['image0'].clone(), data['image0'].clone()))
     K = torch.cat((data['K_color0'].clone(), data['K_color1'].clone())).to(dtype=torch.float32)
     fl = torch.stack((K[:, 0, 0], K[:, 1, 1])).T.to(dtype=torch.float32)
     pp = torch.stack((K[:, 0, 2], K[:, 1, 2])).T.to(dtype=torch.float32)
     shape = torch.from_numpy(np.array([images.shape[2], images.shape[3]])).to(device=K.device, dtype=torch.float32)
-    # fl_ndc, pp_ndc = _convert_pixels_to_ndc(fl, pp, shape)
 
     rotations_world_camera = torch.cat((quaternion_to_matrix(data['abs_q_0'].clone()), quaternion_to_matrix(data['abs_q_1'].clone()))).to(dtype=torch.float32)
     translations_world_camera = torch.cat((torch.zeros((1,3), device=K.device), tr)).to(dtype=torch.float32)
-    # rotations_world_camera[1, :, 0] *= -1
 
-    # return cameras_from_opencv_projection(R=rotations_world_camera, tvec=translations_world_camera, camera_matrix=K, image_size=torch.cat((shape.unsqueeze(0), shape.unsqueeze(0))))
-
-    # h = shape[0]
-    # fx = fl[0, 0]
-    # print(f"h: {h}")
-    # print(f"fx: {fx}")
-
-    # fov_x = torch.rad2deg(2 * torch.arctan(h / (2 * fx)))
-    # print(f"fov_x (deg): {fov_x}")
-    # exit()
-
-
-    # print("gt rotation quaternion")
-    # print(mat2quat(rotations_world_camera[0].cpu().numpy()))
-    # print(mat2quat(rotations_world_camera[1].cpu().numpy()))
-    # print(translations_world_camera)
-    # print(K)
     image_size = shape = torch.cat((shape.unsqueeze(0), shape.unsqueeze(0)))
-    # # print(shape)
-    # print("conversion")
 
     shape = shape.to(rotations_world_camera).flip(dims=(1,))
     
@@ -97,47 +105,16 @@ def convert_data_to_perspective_camera(data):
     scale = scale.expand(-1, 2)
     c0 = shape / 2.0
 
-    # print(c0)
-
     focal_length = torch.stack([K[:, 0, 0], K[:, 1, 1]], dim=-1)
     principal_point = K[:, :2, 2]
     focal_pytorch3d = focal_length / scale
     p0_pytorch3d = -(principal_point - c0) / scale
 
-    # print(focal_pytorch3d)
-    # print(p0_pytorch3d)
-
     R_pytorch3d = rotations_world_camera.clone().permute(0, 2, 1)
     T_pytorch3d = translations_world_camera.clone()
-    # R_pytorch3d[:, :, :2] *= -1
-    # T_pytorch3d[:, :2] *= -1
-
-    # R_pytorch3d[:, :2, :] *= -1
-    # R_pytorch3d[:, :, 1] *= -1
 
     R_pytorch3d[:, :, 2] *= -1
     T_pytorch3d[:, 2] *= -1
-
-    # print("asdfjhsdfkhub")
-    # print(R_pytorch3d)
-    # print([matrix_to_quaternion(r) for r in R_pytorch3d])
-
-    # R_pytorch3d[:, :, 2] *= -1
-
-    # print(R_pytorch3d)
-    # print(T_pytorch3d)
-
-    # # print(R_pytorch3d)
-    # print("rotation quaternions")
-    # for r in R_pytorch3d:
-    #     print(mat2quat(r.cpu().numpy()))
-    # print("translations")
-    # print(T_pytorch3d / 5)
-
-    # exit()
-
-    # cameras = cameras_from_opencv_projection(rotations_world_camera, translations_world_camera, K, shape)
-    # print(cameras.get_world_to_view_transform().get_matrix())
 
     return PerspectiveCameras(
         R=R_pytorch3d,
@@ -480,7 +457,7 @@ def pose_encoding_to_visdom(
 
 def camera_to_pose_encoding(
     camera, 
-    pose_encoding_type="absT_quaR_logFL", 
+    pose_encoding_type="absT_quaR_logFL",
     # log_focal_length_bias=0.2, 
     log_focal_length_bias=1.8, 
     min_focal_length=0.1, 

@@ -43,25 +43,6 @@ class GLUEMatching:
             }
         }
 
-        # self.data += [
-        #     {
-        #         "view0": {
-        #             "name": names[i][:-4],
-        #             "img_path": str(Path(img_folder, names[i])),
-        #             "depth_path": str(Path(depth_folder, names[i][:-4]))
-        #             + depth_ext,
-        #             "camera": cameras[name_to_cam_idx[names[i]]["dist_camera_idx"]],
-        #             "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[i]]),
-        #         },
-        #         "view1": {
-        #             "name": names[j][:-4],
-        #             "img_path": str(Path(img_folder, names[j])),
-        #             "depth_path": str(Path(depth_folder, names[j][:-4]))
-        #             + depth_ext,
-        #             "camera": cameras[name_to_cam_idx[names[j]]["dist_camera_idx"]],
-        #             "T_w2cam": Pose.from_4x4mat(T_world_to_camera[names[j]]),
-        #         },}]
-
         kp1, kp2, li1, li2 = extract_match_memory_glue(data=matcher_data)
 
         return kp1, kp2, li1, li2
@@ -99,6 +80,58 @@ class PrecomputedMatching:
                 matches_fpath = self.matches_file_path.format(
                     scene_root=scene_root, pairs_txt=self.pairs_txt)
                 self.load_correspondences(matches_fpath)
+
+        # get correspondences for the given pair
+        pair_id = data['pair_id'].item()
+        corr = self.correspondences[pair_id]
+
+        # remove nan's (filler)
+        corr = corr[~np.isnan(corr)].reshape(-1, 4)
+        if len(corr) > 0:
+            pts1, pts2 = corr[:, :2], corr[:, 2:]
+        else:
+            pts1 = pts2 = np.array([])
+
+        return pts1, pts2
+
+class MultiplePrecomputedMatching:
+    '''Get correspondences from multiple pre-computed files'''
+
+    def __init__(self, cfg):
+        # Scannet correspondences are stored in a single file, pointed by MATCHES_FILE_PATH
+        # 7Scenes correspondences are split in a file per scene and dependent on the pairs.
+        # The 7Scenes file pattern (including {scene_id} and {test_pairs} tags) is stored in MATCHES_FILE_PATH
+
+        self.correspondences = None
+        self.debug = cfg.DEBUG
+
+        # If there is a pattern, save that string pattern, and will load correspondences once the scene_id is defined
+        if '{' in cfg.MATCHES_FILE_PATH[0]:
+            self.matches_file_path = cfg.MATCHES_FILE_PATH
+            self.scene_id = None
+            self.pairs_txt = cfg.DATASET.PAIRS_TXT.TEST
+        else:
+            self.load_correspondences(cfg.MATCHES_FILE_PATH)
+
+    def load_correspondences(self, file_path):
+        data = np.load(file_path, allow_pickle=True)
+        return data['correspondences'].astype(np.float32)
+
+    def get_correspondences(self, data):
+        # Check if loaded scene_id is still valid (in the case where correspondences are stored over multiple files)
+        # If not, load the correct scene_id correspondences
+        if hasattr(self, 'scene_id'):
+            if self.scene_id != data['scene_id'][0]:
+                self.scene_id = data['scene_id'][0]
+                scene_root = data['scene_root'][0]
+                self.correspondences = []
+                for p in self.matches_file_path:
+                    matches_fpath = p.format(
+                        scene_root=scene_root, pairs_txt=self.pairs_txt)
+                    c = self.load_correspondences(matches_fpath)
+                    self.correspondences.append(c)
+
+                self.correspondences = np.concatenate(self.correspondences, axis=1)
 
         # get correspondences for the given pair
         pair_id = data['pair_id'].item()

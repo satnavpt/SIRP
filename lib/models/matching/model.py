@@ -14,10 +14,12 @@ class FeatureMatchingModel(torch.nn.Module):
             self.feature_matching = PrecomputedMatching(cfg)
         elif cfg.FEATURE_MATCHING == "HLOC":
             self.feature_matching = HLOCMatching(cfg)
+        elif cfg.FEATURE_MATCHING == "MultiplePrecomputed":
+            self.feature_matching = MultiplePrecomputedMatching(cfg)
         elif cfg.FEATURE_MATCHING == "GLUE":
             self.feature_matching = GLUEMatching(cfg)
-        elif cfg.FEATURE_MATCHING == "DUST3R":
-            self.feature_matching = None
+        # elif cfg.FEATURE_MATCHING == "DUST3R":
+        #     self.feature_matching = None
         else:
             raise NotImplementedError('Invalid feature matching')
 
@@ -31,8 +33,8 @@ class FeatureMatchingModel(torch.nn.Module):
             self.pose_solver = ProcrustesSolver(cfg)
         elif cfg.POSE_SOLVER == 'PNP':
             self.pose_solver = PnPSolver(cfg)
-        elif cfg.FEATURE_MATCHING == "DUST3R":
-            self.pose_solver = DUST3RMatching(cfg)
+        # elif cfg.FEATURE_MATCHING == "DUST3R":
+        #     self.pose_solver = DUST3RMatching(cfg)
         else:
             raise NotImplementedError('Invalid pose solver')
 

@@ -11,7 +11,7 @@ from .get_fundamental_matrix import get_fundamental_matrices
 from pytorch3d.renderer.cameras import CamerasBase, PerspectiveCameras
 import os
 
-def geometry_guided_sampling(model_mean: torch.Tensor, t: int, matches_dict: Dict, GGS_cfg: Dict):
+def geometry_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, GGS_cfg: Dict, ):
     # pre-process matches
     b, c, h, w = matches_dict["img_shape"]
     device = model_mean.device

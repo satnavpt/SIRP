@@ -49,7 +49,7 @@ def predict(loader, model, output_root):
         # print(data['pair_names'][0][0])
         q_frame = data['pair_names'][1][0]
         print(q_frame)
-        """selected_frames = [('s00523', 'seq1/frame_00000.jpg'),
+        """selected_frames = [('s00523', 'seq1/frame_00005.jpg'),
             ('s00485', 'seq1/frame_00055.jpg'),
             ('s00505', 'seq1/frame_00305.jpg'),
             ('s00485', 'seq1/frame_00015.jpg'),
@@ -150,7 +150,7 @@ def predict(loader, model, output_root):
             ('s00517', 'seq1/frame_00290.jpg'),
             ('s00497', 'seq1/frame_00465.jpg')]
         """
-        selected_frames = [('s00523', 'seq1/frame_00000.jpg')]
+        selected_frames = [('s00523', 'seq1/frame_00005.jpg')]
         # if (scene_id, q_frame) not in selected_frames:
         #     continue
         data = data_to_model_device(data, model)
@@ -169,7 +169,10 @@ def predict(loader, model, output_root):
 
         R = R.detach().cpu().numpy()
         t = t.reshape(-1).detach().cpu().numpy()
-        inliers = data['inliers']
+        if 'inliers' in data:
+            inliers = data['inliers']
+        else:
+            inliers = None
         scene = data['scene_id'][0]
         query_img = data['pair_names'][1][0]
         if c is None and inliers is not None:

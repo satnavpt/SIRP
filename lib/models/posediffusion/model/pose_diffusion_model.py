@@ -32,14 +32,18 @@ from pytorch3d.transforms import se3_exp_map, se3_log_map, Transform3d, so3_rela
 from pytorch3d.vis.plotly_vis import plot_scene, AxisArgs
 from pytorch3d.utils import opencv_from_cameras_projection, cameras_from_opencv_projection
 
-from ..util.camera_transform import pose_encoding_to_camera, camera_to_pose_encoding, _convert_pixels_to_ndc, transform_to_extrinsics, convert_data_to_perspective_camera, convert_pose_solver_to_perspective_camera, opencv_from_visdom_projection, pose_encoding_to_visdom, get_cropped_images, pose_solver_camera_to_pose_encoding
+from ..util.camera_transform import pose_encoding_to_camera, camera_to_pose_encoding, _convert_pixels_to_ndc, transform_to_extrinsics, convert_data_to_perspective_camera, convert_pose_solver_to_perspective_camera, opencv_from_visdom_projection, pose_encoding_to_visdom, get_cropped_images, pose_solver_camera_to_pose_encoding, convert_data_to_camera_intrinsics
 from ..util.normalize_cameras import normalize_cameras
 from ..util.match_extraction import extract_match_memory
 from ..util.load_img_folder import preprocess_images
 from ..util.geometry_guided_sampling import geometry_guided_sampling
 from ..util.pose_guided_sampling import pose_guided_sampling
 from ..util.point_guided_sampling import point_guided_sampling, HighLossException
+from ..util.point_guided_sampling_2d3d import point_guided_sampling_2d3d, HighLossException
 from ..util.line_guided_sampling import line_guided_sampling
+from ..util.line_guided_sampling_vec import line_guided_sampling_vec
+from ..util.resolve_scale import resolve_scale
+from ..util.resolve_scale_points import resolve_scale_points
 from lib.models.matching.feature_matching import *
 from lib.models.matching.pose_solver import *
 from lib.models.matching.model import FeatureMatchingModel
@@ -47,6 +51,7 @@ from lib.models.matching.model import FeatureMatchingModel
 from .. import model
 from hydra.utils import instantiate
 from pytorch3d.renderer.cameras import PerspectiveCameras
+from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
 
 from transforms3d.quaternions import mat2quat, quat2mat
 
@@ -100,11 +105,15 @@ class PoseDiffusionModel(nn.Module):
         self.GGS = cfg.GGS
         self.PGS = cfg.PGS
         self.PGS3D = cfg.PGS3D
+        self.PGS2D3D = cfg.PGS2D3D
         self.LGS = cfg.LGS
+        self.LGSV = cfg.LGSV
         self.GT_ALIGN = cfg.GT_ALIGN
         self.POSE_ALIGN = cfg.POSE_ALIGN
         self.INIT_POSE = cfg.INIT_POSE
         self.DIFF_CONF = cfg.DIFF_CONF
+        self.RESOLVE_SCALE = cfg.RESOLVE_SCALE
+        self.RESOLVE_SCALE_POINTS = cfg.RESOLVE_SCALE_POINTS
 
         self.DIFFUSER = DIFFUSER
         self.DENOISER = DENOISER
@@ -124,6 +133,8 @@ class PoseDiffusionModel(nn.Module):
             self.fm = SIFTMatching(cfg)
         elif cfg.FEATURE_MATCHING == 'Precomputed':
             self.fm = PrecomputedMatching(cfg)
+        elif cfg.FEATURE_MATCHING == 'MultiplePrecomputed':
+            self.fm = MultiplePrecomputedMatching(cfg)
         elif cfg.FEATURE_MATCHING == "HLOC":
             self.fm = HLOCMatching(cfg)
         elif cfg.FEATURE_MATCHING == "GLUE":
@@ -189,6 +200,7 @@ class PoseDiffusionModel(nn.Module):
 
             # key points in each image and correspondences
             if (kp1 is not None) and len(kp1) != 0:
+                print("GGS IS ACTIVE")
                 keys = ["kp1", "kp2", "i12", "img_shape"]
                 values = [kp1, kp2, i12, images.shape]
                 matches_dict = dict(zip(keys, values))
@@ -196,7 +208,7 @@ class PoseDiffusionModel(nn.Module):
                 self.GGS.pose_encoding_type = self.pose_encoding_type
                 GGS_cfg = OmegaConf.to_container(self.GGS)
 
-                fn = (partial(geometry_guided_sampling, matches_dict=matches_dict, GGS_cfg=GGS_cfg), [10, 0])
+                fn = (partial(geometry_guided_sampling, matches_dict=matches_dict, GGS_cfg=GGS_cfg), [3, 0])
                 if cond_fn is None:
                     cond_fn = fn
                 elif type(cond_fn) is list:
@@ -229,6 +241,7 @@ class PoseDiffusionModel(nn.Module):
                 if pose_solver_conf <= 5:
                     return None, None, None
                 if pose_solver_conf > 10:
+                    print("PGS3D IS ACTIVE")
                     keys = ["kp1", "kp2", "i12", "img_shape"]
                     values = [kp1, kp2, i12, images.shape]
                     matches_dict = dict(zip(keys, values))
@@ -244,41 +257,104 @@ class PoseDiffusionModel(nn.Module):
                             cond_fn = cond_fn.append(fn)
                         else:
                             cond_fn = [cond_fn, fn]
+        if self.PGS2D3D.enable:
+            # kp1, kp2, i12 = extract_match_memory(images=original_images, image_info=original_image_info)
+            kp1, kp2 = self.fm.get_correspondences(uncropped_data)
+            i12 = np.repeat(np.array([[0., 1.]]), len(kp1), axis=0)
+
+            if (kp1 is not None) and (len(kp1) != 0) and (pose_solver_conf is not None):# and (pose_solver_conf > 10):
+                if pose_solver_conf <= 5:
+                    return None, None, None
+                if pose_solver_conf > 10:
+                    keys = ["kp1", "kp2", "i12", "img_shape"]
+                    values = [kp1, kp2, i12, images.shape]
+                    matches_dict = dict(zip(keys, values))
+
+                    self.PGS2D3D.pose_encoding_type = self.pose_encoding_type
+                    if pose_solver_output_1 is not None:
+                        cam2_scale = torch.norm(pose_solver_output_1.T)
+                        # cam2_scale = cam2_scale.detach()
+                        fn = (partial(point_guided_sampling_2d3d, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, pose_scale=cam2_scale, pose_solver_conf=pose_solver_conf), [10, 0])
+                        if cond_fn is None:
+                            cond_fn = fn
+                        elif type(cond_fn) is list:
+                            cond_fn = cond_fn.append(fn)
+                        else:
+                            cond_fn = [cond_fn, fn]
+        if self.RESOLVE_SCALE.enable:
+            kp1, kp2 = self.fm.get_correspondences(uncropped_data)
+            if (kp1 is not None) and (len(kp1) != 0):
+                shape = torch.from_numpy(np.array(images.shape[-2:]))
+                shape = torch.stack((shape, shape))
+                scale_resolver = partial(resolve_scale, data=uncropped_data, kp1=kp1, kp2=kp2, shape=shape)
+            else:
+                scale_resolver = None
+        elif self.RESOLVE_SCALE_POINTS.enable:
+            kp1, kp2 = self.fm.get_correspondences(uncropped_data)
+            if (kp1 is not None) and (len(kp1) != 0):
+                shape = torch.from_numpy(np.array(images.shape[-2:]))
+                shape = torch.stack((shape, shape))
+                scale_resolver = partial(resolve_scale_points, data=uncropped_data, kp1=kp1, kp2=kp2, shape=shape)
+            else:
+                scale_resolver = None
+        else:
+            scale_resolver = None
         if self.LGS.enable:
             # kp1, kp2, i12 = extract_match_memory(images=original_images, image_info=original_image_info)
             kp1, kp2, li1, li2 = self.fm.get_correspondences(uncropped_data)
 
-            keys = ["kp1", "kp2", "li1", "li2", "img_shape"]
-            values = [kp1, kp2, li1, li2, images.shape]
-            matches_dict = dict(zip(keys, values))
+            if (kp1 is not None) and (len(kp1) > 0) and (li1 is not None) and (len(li1) > 0):
+                keys = ["kp1", "kp2", "li1", "li2", "img_shape"]
+                values = [kp1, kp2, li1, li2, images.shape]
+                matches_dict = dict(zip(keys, values))
 
-            self.LGS.pose_encoding_type = self.pose_encoding_type
-            fn = (partial(line_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz), [10, 0])
-            if cond_fn is None:
-                cond_fn = fn
-            elif type(cond_fn) is list:
-                cond_fn = cond_fn.append(fn)
-            else:
-                cond_fn = [cond_fn, fn]
+                self.LGS.pose_encoding_type = self.pose_encoding_type
+                fn = (partial(line_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz), [10, 0])
+                if cond_fn is None:
+                    cond_fn = fn
+                elif type(cond_fn) is list:
+                    cond_fn = cond_fn.append(fn)
+                else:
+                    cond_fn = [cond_fn, fn]
+
+        if self.LGSV.enable:
+            # kp1, kp2, i12 = extract_match_memory(images=original_images, image_info=original_image_info)
+            kp1, kp2, li1, li2 = self.fm.get_correspondences(uncropped_data)
+
+            if (kp1 is not None) and (len(kp1) > 0) and (li1 is not None) and (len(li1) > 0):
+                keys = ["kp1", "kp2", "li1", "li2", "img_shape"]
+                values = [kp1, kp2, li1, li2, images.shape]
+                matches_dict = dict(zip(keys, values))
+
+                self.LGSV.pose_encoding_type = self.pose_encoding_type
+                fn = (partial(line_guided_sampling_vec, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz), [10, 0])
+                if cond_fn is None:
+                    cond_fn = fn
+                elif type(cond_fn) is list:
+                    cond_fn = cond_fn.append(fn)
+                else:
+                    cond_fn = [cond_fn, fn]
 
 
         training = False
         images = images.unsqueeze(0)
         
-        result = self._forward(image=images.to(device=r.device), cond_fn=cond_fn, training=False, denoise_init=init_poses, data=uncropped_data, pose_solver_output=(pose_solver_output_1, pose_solver_output_2), pose_solver_conf=pose_solver_conf)
+        result = self._forward(image=images.to(device=r.device), cond_fn=cond_fn, training=False, denoise_init=init_poses, data=uncropped_data, pose_solver_output=(pose_solver_output_1, pose_solver_output_2), pose_solver_conf=pose_solver_conf, scale_resolver=scale_resolver)
         if result is None:
             return None, None, None
-        pred_cameras, conf = result
-        shape = torch.from_numpy(np.array(images.shape[-2:]))
-        shape = torch.stack((shape, shape))
-        uncropped_data['inliers'] = 0
+        if len(result) == 2:
+            pred_cameras, conf = result
+            shape = torch.from_numpy(np.array(images.shape[-2:]))
+            shape = torch.stack((shape, shape))
+            uncropped_data['inliers'] = 0
 
-        pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
-
-        relativeR_quat = quaternion_multiply(torch.from_numpy(mat2quat(pred_R[1].cpu().numpy())), quaternion_invert(torch.from_numpy(mat2quat(pred_R[0].cpu().numpy()))))
-        relativeR = torch.from_numpy(quat2mat(relativeR_quat.cpu())).unsqueeze(0)
-        
-        relativeT = pred_T[1] - pred_T[0]
+            pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
+            relativeR_quat = quaternion_multiply(torch.from_numpy(mat2quat(pred_R[1].cpu().numpy())), quaternion_invert(torch.from_numpy(mat2quat(pred_R[0].cpu().numpy()))))
+            relativeR = torch.from_numpy(quat2mat(relativeR_quat.cpu())).unsqueeze(0)
+            
+            relativeT = pred_T[1] - pred_T[0]
+        elif len(result) == 3:
+            relativeR, relativeT, conf = result
 
         return relativeR, relativeT, conf
 
@@ -295,6 +371,7 @@ class PoseDiffusionModel(nn.Module):
         data=None,
         pose_solver_output = None,
         pose_solver_conf = None,
+        scale_resolver = None
     ):
         """
         Forward pass of the PoseDiffusionModel.
@@ -342,9 +419,12 @@ class PoseDiffusionModel(nn.Module):
             B, N, _ = z.shape
 
             target_shape = [B, N, self.target_dim]
-
-            gt_pose = convert_data_to_perspective_camera(data)
-            gt_logfl = torch.log(gt_pose.focal_length) - 1.8
+            
+            # gt_pose = convert_data_to_perspective_camera(data)
+            # gt_logfl = torch.log(gt_pose.focal_length) - 1.8
+            gt_pose = None
+            fl = (convert_data_to_camera_intrinsics(data))
+            gt_logfl = torch.log(fl) - 1.8
 
             if self.DIFF_CONF.enable:
                 pose_encodings = []
@@ -442,7 +522,8 @@ class PoseDiffusionModel(nn.Module):
                     w.writerow(out)
 
                 if self.viz is not None:
-                    cams_show_1 = {"gt": gt_pose, "emat": pose_solver_output[0]}
+                    cams_show_1 = {"emat": pose_solver_output[0]}
+                    if gt_pose is not None: cams_show_1["gt"] = gt_pose
                     for i in range(len(pose_encodings)):
                         cams_show_1[f"pose_{i}"] = pose_encoding_to_visdom(pose_encodings[i], pose_encoding_type=self.pose_encoding_type, return_dict=False)
                     fig = plot_scene({f"{conf}": cams_show_1}, axis_args=AxisArgs(showgrid=True))
@@ -491,6 +572,41 @@ class PoseDiffusionModel(nn.Module):
                                 print(f"confidence in pose_solver: {pose_solver_conf}")
                             pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
                             break
+            elif self.PGS2D3D.enable:
+                attempts_remaining = 3
+                best_diffuser_loss = float('inf')
+                best_diffuser_start = None
+                best_diffuser_pose_process = None
+                print(f"PGS2D3D: attempts remaining: {attempts_remaining}!!!")
+                while attempts_remaining >= 0:
+                    print(f"PGS2D3D: attempt {4 - attempts_remaining}!!!")
+                    try:
+                        (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.sample(
+                            shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+                        )
+                        if pose_solver_conf is not None:
+                            print(f"confidence in pose_solver: {pose_solver_conf}")
+                        pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
+                        break
+                    except HighLossException as e:
+                        print(f"PGS2D3D doesn't agree with diffusion output!!! loss is: {e.loss}")
+                        if e.loss < best_diffuser_loss:
+                            print("This was the best sample so far though - saving...")
+                            best_diffuser_loss = e.loss
+                            best_diffuser_start = self.diffuser.start
+                            best_diffuser_pose_process = self.diffuser.pose_process
+                        if attempts_remaining > 0:
+                            print("Going to generate another diffusion sample!!!")
+                            attempts_remaining -= 1
+                        else:
+                            print("Out of attempts, going to use best sample so far!!!")
+                            (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.continue_sample(best_diffuser_pose_process, best_diffuser_start,
+                                shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+                            )
+                            if pose_solver_conf is not None:
+                                print(f"confidence in pose_solver: {pose_solver_conf}")
+                            pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
+                            break
             else:
                 (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.sample(
                     shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init, gt_fl=gt_logfl
@@ -500,8 +616,7 @@ class PoseDiffusionModel(nn.Module):
                     print(f"confidence in pose_solver: {pose_solver_conf}")
                 pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
 
-
-            # pred_cams_process = [pose_encoding_to_visdom(p, pose_encoding_type=self.pose_encoding_type, return_dict=False) for p in pose_encoding_diffusion_samples]
+            pred_cams_process = [pose_encoding_to_visdom(p, pose_encoding_type=self.pose_encoding_type, return_dict=False) for p in pose_encoding_diffusion_samples]
 
             if self.GT_ALIGN.enable:
                 pred_cams_aligned = corresponding_cameras_alignment(
@@ -516,7 +631,8 @@ class PoseDiffusionModel(nn.Module):
                     )
 
                     if self.viz is not None:
-                        cams_show = {"gt": gt_pose, "pred": pred_cams, "pose_1": pose_solver_output[0], "a1": pred_cams_aligned_p_1}#, "pose_2": pose_solver_output[1], , "a2": pred_cams_aligned_p_2}
+                        cams_show = {"pred": pred_cams, "pose_1": pose_solver_output[0], "a1": pred_cams_aligned_p_1}#, "pose_2": pose_solver_output[1], , "a2": pred_cams_aligned_p_2}
+                        if gt_pose is not None: cams_show["gt"] = gt_pose
                         fig = plot_scene({f"{self.i}": cams_show}, axis_args=AxisArgs(showgrid=True))
                         self.viz.plotlyplot(fig, env="main", win=f"{self.i}")
                     return pred_cams_aligned_p_1, 0
@@ -526,7 +642,7 @@ class PoseDiffusionModel(nn.Module):
                 if self.viz is not None:
                     d = {}
                     i = 1
-                    d["gt"] = gt_pose
+                    if gt_pose is not None: d["gt"] = gt_pose
                     d["pred"] = pred_cams
                     d["pose_1"] = pose_solver_output[0]
                     # d[0] = pred_cams_process[0]
@@ -541,7 +657,7 @@ class PoseDiffusionModel(nn.Module):
                 if self.viz is not None:
                     d = {}
                     i = 0
-                    d["gt"] = gt_pose
+                    if gt_pose is not None: d["gt"] = gt_pose
                     d["pred"] = pred_cams
                     d["pose_1"] = pose_solver_output[0]
                     for p in pred_cams_process[-15:]:
@@ -556,23 +672,51 @@ class PoseDiffusionModel(nn.Module):
                 if self.viz is not None:
                     d = {}
                     i = 0
-                    d["gt"] = gt_pose
+                    if gt_pose is not None: d["gt"] = gt_pose
                     d["pred"] = pred_cams
                     if pose_solver_output[0] is not None:
                         d["pose_solver"] = pose_solver_output[0]
-                    for p in pred_cams_process[-15:]:
-                        d[i] = p
-                        i += 1
+                    if pred_cams_process:
+                        for p in pred_cams_process[-15:]:
+                            d[i] = p
+                            i += 1
                     cams_show = d
                     fig = plot_scene({f"{1}": cams_show}, axis_args=AxisArgs(showgrid=True))
                     self.viz.plotlyplot(fig, env="main", win=f"{1}")
                 if pose_solver_conf is not None:
-                    if pose_solver_conf <= 10:
-                        pose_solver_conf = -1
                     return pred_cams, pose_solver_conf
+            elif self.PGS2D3D.enable:
+                if self.viz is not None:
+                    d = {}
+                    i = 0
+                    if gt_pose is not None: d["gt"] = gt_pose
+                    d["pred"] = pred_cams
+                    if pose_solver_output[0] is not None:
+                        d["pose_solver"] = pose_solver_output[0]
+                    if pred_cams_process:
+                        for p in pred_cams_process[-15:]:
+                            d[i] = p
+                            i += 1
+                    cams_show = d
+                    fig = plot_scene({f"{1}": cams_show}, axis_args=AxisArgs(showgrid=True))
+                    self.viz.plotlyplot(fig, env="main", win=f"{1}")
+                if pose_solver_conf is not None:
+                    return pred_cams, pose_solver_conf
+            elif self.RESOLVE_SCALE.enable or self.RESOLVE_SCALE_POINTS.enable:
+                if scale_resolver is not None:
+                    R, t = scale_resolver(pred_cams)
+                    if self.viz is not None:
+                        cams_show = {"pred": pred_cams}
+                        if gt_pose is not None: cams_show["gt"] = gt_pose
+                        fig = plot_scene({f"{self.i}": cams_show}, axis_args=AxisArgs(showgrid=True))
+                        self.viz.plotlyplot(fig, env="main", win=f"{self.i}")
+                    return R, t, 0
+                else:
+                    return pred_cams, 0
             else:
                 if self.viz is not None:
-                    cams_show = {"gt": gt_pose, "pred": pred_cams}
+                    cams_show = {"pred": pred_cams}
+                    if gt_pose is not None: cams_show["gt"] = gt_pose
                     fig = plot_scene({f"{self.i}": cams_show}, axis_args=AxisArgs(showgrid=True))
                     self.viz.plotlyplot(fig, env="main", win=f"{self.i}")
                 return pred_cams, 0

@@ -66,4 +66,24 @@ def stack_pts(pts_list):
     pts_stack = np.full((N, max_npts, D), np.nan)
     for i, pts in enumerate(pts_list):
         pts_stack[i, :pts.shape[0]] = pts
+    
     return pts_stack
+
+def stack_lis(lis_list):
+    '''Given a lis list with N arrays, each shaped (Npts, D), where Npts varies, creates a common array shaped (N, max(Npts), D) filled with NaNs when Npts < Max(Npts)'''
+    assert len(lis_list) > 0, 'list must not be empty'
+
+    new_lis_list = []
+    for l in lis_list:
+        line_count = l.shape[0]
+        new_lis_list.append(l.reshape(line_count, -1))
+
+    lis_list = new_lis_list
+    N = len(lis_list)
+    max_nlis = max([lis.shape[0] for lis in lis_list])
+    D = lis_list[0].shape[1]
+    lis_stack = np.full((N, max_nlis, D), np.nan)
+    for i, lis in enumerate(lis_list):
+        lis_stack[i, :lis.shape[0]] = lis
+
+    return lis_stack

@@ -40,8 +40,20 @@ _CN.PGS.f_weight = None
 _CN.PGS3D = CN()
 _CN.PGS3D.enable = None
 
+_CN.PGS2D3D = CN()
+_CN.PGS2D3D.enable = None
+
 _CN.LGS = CN()
 _CN.LGS.enable = None
+
+_CN.LGSV = CN()
+_CN.LGSV.enable = None
+
+_CN.RESOLVE_SCALE = CN()
+_CN.RESOLVE_SCALE.enable = None
+
+_CN.RESOLVE_SCALE_POINTS = CN()
+_CN.RESOLVE_SCALE_POINTS.enable = None
 
 _CN.INIT_POSE = CN()
 _CN.INIT_POSE.enable = None

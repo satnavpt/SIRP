@@ -51,12 +51,6 @@ def extract_match_memory(images = None, image_info = None):
             save_image(image, os.path.join(tmp_mapping, f"{i}.png"))
         matches, keypoints = run_hloc(tmpdir)
 
-    # print(matches)
-    # print(len(list(matches.values())[0]))
-    # print(keypoints)
-    # print(len(list(keypoints.values())[0]))
-    # print(len(list(keypoints.values())[1]))
-    # From the format of colmap to PyTorch3D
     kp1, kp2, i12 = colmap_keypoint_to_pytorch3d(matches, keypoints, image_info)
 
     return kp1, kp2, i12

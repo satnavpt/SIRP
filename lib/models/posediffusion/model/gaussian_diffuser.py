@@ -261,45 +261,57 @@ class GaussianDiffusion(nn.Module):
         # seed_all_random_engines(0)
         ################################################################################
 
+        l, l_r = 0, 0
         b, *_, device = *x.shape, x.device
         batched_times = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
             x=x, t=batched_times, z=z, x_self_cond=x_self_cond, clip_denoised=clip_denoised
         )
 
+        res = None
+
         if cond_fn is not None:
-            # print(model_mean[...,3:7].norm(dim=-1, keepdim=True))
+            # print(model_measn[...,3:7].norm(dim=-1, keepdim=True))
             # tmp = model_mean.clone()
             if type(cond_fn) is list:
                 for fn, start_step in cond_fn:
                     s, e = start_step
                     if (t < s) and (t >= e):
-                        model_mean = fn(model_mean, t, disable_retry=disable_retry)
+                        res = fn(model_mean, t, disable_retry=disable_retry)
             else:
                 fn, start_step = cond_fn
                 s, e = start_step
                 if (t < s) and (t >= e):
-                    model_mean = fn(model_mean, t, disable_retry=disable_retry)
+                    res = fn(model_mean, t, disable_retry=disable_retry)
             # diff_norm = torch.norm(tmp-model_mean)
             # print(f"the diff norm is {diff_norm}")
             noise = 0.0
         else:
             noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
 
-        if (type(model_mean) is tuple):
-            if (t == 0):
-                model_mean, rescale_factor = model_mean
-                # print(model_mean)
-                model_mean[:, :3] /= rescale_factor
-                print(f"rescale: {rescale_factor}")
-                # print(model_mean)s
+        model_mean_r = None
+
+        if (type(res) is tuple):
+            if len(res) == 3:
+                (model_mean, l), (model_mean_r, l_r), rescale_factor = res
+                print(f"{t}: {l}")
+                print(f"{t}: {l_r}")
             else:
-                model_mean, _ = model_mean
+                if (t == 0):
+                    (model_mean, l), rescale_factor = res
+                    model_mean[:, :3] /= rescale_factor
+                    print(f"rescale: {rescale_factor}")
+                else:
+                    (model_mean, l), _ = res
+                print(f"{t}: {l}")
 
 
         pred = model_mean + (0.5 * model_log_variance).exp() * noise
+        if model_mean_r is not None:
+            pred_r = model_mean_r + (0.5 * model_log_variance).exp() * noise
+            return (pred, l), (pred_r, l_r), x_start
 
-        return pred, x_start
+        return (pred, l), x_start
 
     @torch.no_grad()
     def p_sample_loop(self, shape, z: torch.Tensor, cond_fn=None, cond_start_step=0, init_pose=None, gt_fl=None):
@@ -320,13 +332,30 @@ class GaussianDiffusion(nn.Module):
         self.pose_process = []
         self.pose_process.append(pose.unsqueeze(0))
 
+        pose_r = None
+        res_r = None
+
         for t in reversed(range(0, self.num_timesteps)):
             self.start = t
-            pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn)
+            res = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn)
+            if pose_r is not None:
+                res_r = self.p_sample(x=pose_r, t=t, z=z, cond_fn=cond_fn)
+            if len(res) == 3:
+                (pose, l), (pose_r, l_r), _ = res
+            else:
+                (pose, l), _ = res
+
+            if res_r is not None:
+                (pose_r, l_r), _ = res_r
+
             if gt_fl is not None:
                 pose[:, :, 7:9] = gt_fl
             self.pose_process.append(pose.unsqueeze(0))
 
+        if pose_r is not None:
+            if l_r < l:
+                print("REVERSED!")
+                return pose_r, torch.cat(self.pose_process)
         return pose, torch.cat(self.pose_process)
 
     @torch.no_grad()
