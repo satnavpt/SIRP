@@ -27,7 +27,7 @@ class HighLossException(Exception):
     def __init__(self, loss):
         self.loss = loss
 
-def line_guided_sampling_vec(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz):
+def line_guided_sampling_vec(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz, flip):
     device = model_mean.device
 
     def _to_device(tensor):
@@ -56,7 +56,7 @@ def line_guided_sampling_vec(model_mean: torch.Tensor, t: int, disable_retry, ma
 
     # optimise
     model_mean_reverse = None
-    if t == 9:
+    if flip and t == 9:
         model_mean, rescale_factor, loss = LGSV_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
 
         model_mean_reverse = model_mean.detach().clone()
@@ -65,12 +65,6 @@ def line_guided_sampling_vec(model_mean: torch.Tensor, t: int, disable_retry, ma
         model_mean_reverse[0, 1, 0] *= -1
 
         model_mean_reverse, rescale_factor_reverse, loss_reverse = LGSV_optimize(model_mean_reverse, t, uncropped_data, processed_matches, viz=viz)
-
-        # print(f"loss: {loss}")
-        # print(f"reverse loss: {loss_reverse}")
-        # if loss_reverse < loss:
-        #     print("reversed!")
-        #     model_mean = model_mean_reverse
     else:
         model_mean, rescale_factor, loss = LGSV_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
     # print(f"loss: {loss}")
@@ -132,7 +126,7 @@ def LGSV_optimize(
         batch_size = model_mean.shape[1]
 
         for i in range(iter_num):
-            loss, rescale_factor = compute_line_distance(
+            ll, pl, rescale_factor = compute_line_distance(
                 i,
                 model_mean,
                 t,
@@ -145,6 +139,8 @@ def LGSV_optimize(
                 viz=viz,
                 pose_scale=pose_scale
             )
+
+            loss = ll + pl
         
             optimizer.zero_grad()
             loss.backward()
@@ -160,6 +156,7 @@ def LGSV_optimize(
             optimizer.step()
 
         model_mean = model_mean.detach()
+    print(f"{(ll + pl).item()}, {(ll).item()}, {(pl).item()}")
 
     return model_mean, rescale_factor, loss
 
@@ -216,16 +213,16 @@ def compute_line_distance(
     kp2 = processed_matches['kp2']
     l1 = processed_matches['l1']
     l2 = processed_matches['l2']
-    loss = line_vector_loss(i, relR, relT, uncropped_data, kp1, kp2, l1, l2, pred_cameras, viz, gt_pose, rescale_factor)
+    ll, pl = line_vector_loss(i, relR, relT, uncropped_data, kp1, kp2, l1, l2, pred_cameras, viz, gt_pose, rescale_factor)
 
-    return loss, rescale_factor
+    return ll, pl, rescale_factor
 
 def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, rescale_factor):
     # backproject E-mat inliers at each camera
     ransac_scale_threshold = 0.1
 
-    K0 = data['K_color0'].squeeze(0)
-    K1 = data['K_color1'].squeeze(0)
+    K0 = data['K_color0'].squeeze(0).to(torch.float32)
+    K1 = data['K_color1'].squeeze(0).to(torch.float32)
     # mask = get_mask(data, all_points_1, all_points_2).ravel() == 1
 
     if type(kp1) is torch.Tensor:
@@ -248,6 +245,10 @@ def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, resc
 
     # point_loss = (torch.abs(xyz1 - xyz0) ** 2).mean()
 
+    s = l1.shape
+    l1 = l1.reshape(s[0], 2, 2)
+    l2 = l2.reshape(s[0], 2, 2)
+
     l1[:, :, 1] = np.clip(l1[:, :, 1], 0, data['depth0'].shape[1]-1)
     l1[:, :, 0] = np.clip(l1[:, :, 0], 0, data['depth0'].shape[2]-1)
 
@@ -260,12 +261,13 @@ def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, resc
     l2_ends = l2[:, 1, :]
 
     depth_l1_starts = data['depth0'][0, l1_starts[:, 1], l1_starts[:, 0]]
-    l1_starts_3d = backproject_3d_tensor(torch.from_numpy(l1_starts).to(device=K0.device), depth_l1_starts, K0).to(dtype=torch.float32, device=R.device)
+
+    l1_starts_3d = backproject_3d_tensor(torch.from_numpy(l1_starts).to(dtype=torch.float32, device=K0.device), depth_l1_starts, K0).to(dtype=torch.float32, device=R.device)
     l1_starts_3d = ((R @ l1_starts_3d.T).T)
     l1_starts_3d += (t * rescale_factor)
 
     depth_l1_ends = data['depth0'][0, l1_ends[:, 1], l1_ends[:, 0]]
-    l1_ends_3d = backproject_3d_tensor(torch.from_numpy(l1_ends).to(device=K0.device), depth_l1_ends, K0).to(dtype=torch.float32, device=R.device)
+    l1_ends_3d = backproject_3d_tensor(torch.from_numpy(l1_ends).to(dtype=torch.float32, device=K0.device), depth_l1_ends, K0).to(dtype=torch.float32, device=R.device)
     l1_ends_3d = ((R @ l1_ends_3d.T).T)
     l1_ends_3d += (t * rescale_factor)
 
@@ -275,10 +277,10 @@ def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, resc
     # l1_vecs = torch.div(l1_vecs, n)
 
     depth_l2_starts = data['depth1'][0, l2_starts[:, 1], l2_starts[:, 0]]
-    l2_starts_3d = backproject_3d_tensor(torch.from_numpy(l2_starts).to(device=K0.device), depth_l2_starts, K0).to(dtype=torch.float32, device=R.device)
+    l2_starts_3d = backproject_3d_tensor(torch.from_numpy(l2_starts).to(dtype=torch.float32, device=K0.device), depth_l2_starts, K0).to(dtype=torch.float32, device=R.device)
 
     depth_l2_ends = data['depth1'][0, l2_ends[:, 1], l2_ends[:, 0]]
-    l2_ends_3d = backproject_3d_tensor(torch.from_numpy(l2_ends).to(device=K0.device), depth_l2_ends, K0).to(dtype=torch.float32, device=R.device)
+    l2_ends_3d = backproject_3d_tensor(torch.from_numpy(l2_ends).to(dtype=torch.float32, device=K0.device), depth_l2_ends, K0).to(dtype=torch.float32, device=R.device)
 
     l2_vecs = l2_ends_3d - l2_starts_3d
     # n = torch.norm(l2_vecs, dim=1)
@@ -300,7 +302,7 @@ def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, resc
     pl = (torch.abs(l2_starts_3d - l1_starts_3d) ** 2).mean()  # + (torch.abs(l2_ends_3d - l1_ends_3d) ** 2).mean()
 
     # print(f"point: {pl.item()}, line: {line_loss.item()}")
-    return line_loss + pl
+    return line_loss, pl
 
 def sample(lines1, lines2):
     l1_points = []

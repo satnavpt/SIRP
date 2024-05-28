@@ -22,12 +22,7 @@ from pytorch3d.vis.plotly_vis import plot_scene, AxisArgs
 import time
 import csv
 
-
-class HighLossException(Exception):
-    def __init__(self, loss):
-        self.loss = loss
-
-def line_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz):
+def line_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz, flip):
     device = model_mean.device
 
     def _to_device(tensor):
@@ -48,63 +43,21 @@ def line_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matche
     def _to_homogeneous(tensor):
         return torch.nn.functional.pad(tensor, [0, 1], value=1)
 
-    # print(f"step: {t}")
     pose_encoding_type = "absT_quaR_logFL"
-
-    # print(f"points: {processed_matches['kp1'].shape[0]}")
-    # print(f"lines: {processed_matches['l1'].shape[0]}")
 
     # optimise
     model_mean_reverse = None
-    if t == 9:
-        model_mean, rescale_factor, loss = LGS_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
+    # if flip and t == 9:
+    #     model_mean, rescale_factor, loss = LGS_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
 
-        model_mean_reverse = model_mean.detach().clone()
-        r = quaternion_to_matrix(model_mean_reverse[0, 1, 3:7])
-        model_mean_reverse[0, 1, 3:7] = matrix_to_quaternion(r)
-        model_mean_reverse[0, 1, 0] *= -1
+    #     model_mean_reverse = model_mean.detach().clone()
+    #     r = quaternion_to_matrix(model_mean_reverse[0, 1, 3:7])
+    #     model_mean_reverse[0, 1, 3:7] = matrix_to_quaternion(r)
+    #     model_mean_reverse[0, 1, 0] *= -1
 
-        model_mean_reverse, rescale_factor_reverse, loss_reverse = LGS_optimize(model_mean_reverse, t, uncropped_data, processed_matches, viz=viz)
-
-        # print(f"loss: {loss}")
-        # print(f"reverse loss: {loss_reverse}")
-        # if loss_reverse < loss:
-        #     print("reversed!")
-        #     model_mean = model_mean_reverse
-    else:
-        model_mean, rescale_factor, loss = LGS_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
-    # print(f"loss: {loss}")
-
-    # pred_cameras = pose_encoding_to_visdom(model_mean, pose_encoding_type)
-    # shape = torch.tensor([[224, 224], [224, 224]])
-    # gt_pose = convert_data_to_perspective_camera(uncropped_data)
-    # pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
-    # gt_R, gt_T, gt_K = opencv_from_visdom_projection(gt_pose, shape)
-
-    # out = {}
-    # out['t'] = t
-    # out['predR0'] = matrix_to_quaternion(pred_R)[0].cpu().numpy()
-    # out['predT0'] = pred_T[0].cpu().numpy()
-    # out['predK0'] = torch.tensor([pred_K[0][0][0], pred_K[0][0][2], pred_K[0][1][1], pred_K[0][1][2]]).cpu().numpy()
-    # out['predR1'] = matrix_to_quaternion(pred_R)[1].cpu().numpy()
-    # out['predT1'] = pred_T[1].cpu().numpy()
-    # out['predK1'] = torch.tensor([pred_K[1][0][0], pred_K[1][0][2], pred_K[1][1][1], pred_K[1][1][2]]).cpu().numpy()
-    # out['gtR0'] = matrix_to_quaternion(gt_R)[0].cpu().numpy()
-    # out['gtT0'] = gt_T[0].cpu().numpy()
-    # out['gtK0'] = torch.tensor([gt_K[0][0][0], gt_K[0][0][2], gt_K[0][1][1], gt_K[0][1][2]]).cpu().numpy()
-    # out['gtR1'] = matrix_to_quaternion(gt_R)[1].cpu().numpy()
-    # out['gtT1'] = gt_T[1].cpu().numpy()
-    # out['gtK1'] = torch.tensor([gt_K[1][0][0], gt_K[1][0][2], gt_K[1][1][1], gt_K[1][1][2]]).cpu().numpy()
-    # out['lgs3dloss'] = loss.item()
-    # out['num_points'] = processed_matches["kp1"].shape[0]
-    # out['num_lines'] = processed_matches["l1"].shape[0]
-
-    # write_header = not os.path.isfile(f"./{os.environ['out_root']}/lgs_losses.csv")
-    # with open(f"./{os.environ['out_root']}/lgs_losses.csv", 'a') as f:
-    #     w = csv.DictWriter(f, out.keys())
-    #     if write_header:
-    #         w.writeheader()
-    #     w.writerow(out)
+    #     model_mean_reverse, rescale_factor_reverse, loss_reverse = LGS_optimize(model_mean_reverse, t, uncropped_data, processed_matches, viz=viz)
+    # else:
+    model_mean, rescale_factor, loss = LGS_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz)
 
     if model_mean_reverse is not None:
         return (model_mean, loss), (model_mean_reverse, loss_reverse), rescale_factor
@@ -121,7 +74,7 @@ def LGS_optimize(
     pose_encoding_type: str = "absT_quaR_logFL",
     alpha: float = 1e-2,
     learning_rate: float = 1e-2,
-    iter_num: int = 30,
+    iter_num: int = 20,
     viz = None,
     pose_scale=1,
     **kwargs,
@@ -248,6 +201,9 @@ def line_vector_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, resc
 
     # point_loss = (torch.abs(xyz1 - xyz0) ** 2).mean()
 
+    print(l1.shape)
+    exit()
+
     l1[:, :, 1] = np.clip(l1[:, :, 1], 0, data['depth0'].shape[1]-1)
     l1[:, :, 0] = np.clip(l1[:, :, 0], 0, data['depth0'].shape[2]-1)
 
@@ -320,10 +276,14 @@ def line_to_point_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, re
     l1_points = torch.cat([torch.from_numpy(p).to(dtype=torch.int32, device=R.device) for p in l1_points])
     l1_points[:, 1] = torch.clip(l1_points[:, 1], 0, data['depth0'].shape[1]-1)
     l1_points[:, 0] = torch.clip(l1_points[:, 0], 0, data['depth0'].shape[2]-1)
+    kp1[:, 1] = np.clip(kp1[:, 1], 0, data['depth0'].shape[1]-1)
+    kp1[:, 0] = np.clip(kp1[:, 0], 0, data['depth0'].shape[2]-1)
 
     l2_points = torch.cat([torch.from_numpy(p).to(dtype=torch.int32, device=R.device) for p in l2_points])
     l2_points[:, 1] = torch.clip(l2_points[:, 1], 0, data['depth1'].shape[1]-1)
     l2_points[:, 0] = torch.clip(l2_points[:, 0], 0, data['depth1'].shape[2]-1)
+    kp2[:, 1] = np.clip(kp2[:, 1], 0, data['depth1'].shape[1]-1)
+    kp2[:, 0] = np.clip(kp2[:, 0], 0, data['depth1'].shape[2]-1)
 
     all_points_1 = torch.cat([torch.from_numpy(kp1).to(l1_points.device), l1_points])
     all_points_2 = torch.cat([torch.from_numpy(kp2).to(l2_points.device), l2_points])
@@ -336,6 +296,7 @@ def line_to_point_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, re
     depth_inliers_1 = data['depth1'][0, inliers_2[:, 1], inliers_2[:, 0]]
 
     valid = (depth_inliers_0 > 0) * (depth_inliers_1 > 0)
+
     xyz0 = backproject_3d_tensor(inliers_1[valid], depth_inliers_0[valid], K0).to(dtype=torch.float32, device=R.device)
     xyz1 = backproject_3d_tensor(inliers_2[valid], depth_inliers_1[valid], K1).to(dtype=torch.float32, device=R.device)
 
@@ -409,13 +370,20 @@ def line_to_point_loss(i, R, t, data, kp1, kp2, l1, l2, camera, viz, gt_pose, re
 def sample(lines1, lines2):
     l1_points = []
     l2_points = []
-    for (point1A, point1B), (point2A, point2B) in zip(lines1, lines2):
+    if len(lines1) > 5:
+        lines1 = lines1[:5]
+        lines2 = lines2[:5]
+    for (point1), (point2) in zip(lines1, lines2):
+        point1A, point1B = point1[:2], point1[2:]
+        point2A, point2B = point2[:2], point2[2:]
         p1 = []
         p2 = []
 
         vec1 = point1B - point1A
         vec2 = point2B - point2A
         num_samples = np.floor(np.linalg.norm(vec1)).astype(np.int32)
+        if num_samples > 5:
+            num_samples = 5
         vec1_n = vec1 / num_samples
         vec2_n = vec2 / num_samples
         p1.append(point1A)

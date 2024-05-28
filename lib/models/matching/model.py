@@ -12,6 +12,8 @@ class FeatureMatchingModel(torch.nn.Module):
             self.feature_matching = SIFTMatching(cfg)
         elif cfg.FEATURE_MATCHING == 'Precomputed':
             self.feature_matching = PrecomputedMatching(cfg)
+        elif cfg.FEATURE_MATCHING == 'PrecomputedGLUE':
+            self.feature_matching = PrecomputedGLUEMatching(cfg)
         elif cfg.FEATURE_MATCHING == "HLOC":
             self.feature_matching = HLOCMatching(cfg)
         elif cfg.FEATURE_MATCHING == "MultiplePrecomputed":
@@ -30,9 +32,9 @@ class FeatureMatchingModel(torch.nn.Module):
         elif cfg.POSE_SOLVER == 'EssentialMatrixMetricMean':
             self.pose_solver = EssentialMatrixMetricSolverMEAN(cfg.EMAT_RANSAC)
         elif cfg.POSE_SOLVER == 'Procrustes':
-            self.pose_solver = ProcrustesSolver(cfg)
+            self.pose_solver = ProcrustesSolver(cfg.PROCRUSTES)
         elif cfg.POSE_SOLVER == 'PNP':
-            self.pose_solver = PnPSolver(cfg)
+            self.pose_solver = PnPSolver(cfg.PNP)
         # elif cfg.FEATURE_MATCHING == "DUST3R":
         #     self.pose_solver = DUST3RMatching(cfg)
         else:
@@ -41,12 +43,14 @@ class FeatureMatchingModel(torch.nn.Module):
     def forward(self, data):
         assert data['depth0'].shape[0] == 1, 'Baseline models require batch size of 1'
 
+        res = self.feature_matching.get_correspondences(data)
         # get 2D-2D correspondences
-        if isinstance(self.feature_matching, GLUEMatching):
-            pts1, pts2, lin1, lin2 = self.feature_matching.get_correspondences(data)
-            raise Exception("dsgjhgdfghdfiuh")
-        if self.feature_matching is not None:
-            pts1, pts2 = self.feature_matching.get_correspondences(data)
+        if len(res) == 4:
+            pts1, pts2, lin1, lin2 = res
+            data['inliers'] = (len(pts1) // 2) + (len(lin1) // 2)
+            return None, None
+        elif len(res) == 2:
+            pts1, pts2 = res
 
             # get relative pose
             R, t, inliers = self.pose_solver.estimate_pose(pts1, pts2, data)

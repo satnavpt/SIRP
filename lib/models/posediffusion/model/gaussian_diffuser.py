@@ -294,16 +294,16 @@ class GaussianDiffusion(nn.Module):
         if (type(res) is tuple):
             if len(res) == 3:
                 (model_mean, l), (model_mean_r, l_r), rescale_factor = res
-                print(f"{t}: {l}")
-                print(f"{t}: {l_r}")
+                # print(f"{t}: {l}")
+                # print(f"{t}: {l_r}")
             else:
                 if (t == 0):
                     (model_mean, l), rescale_factor = res
                     model_mean[:, :3] /= rescale_factor
-                    print(f"rescale: {rescale_factor}")
+                    # print(f"rescale: {rescale_factor}")
                 else:
                     (model_mean, l), _ = res
-                print(f"{t}: {l}")
+                # print(f"{t}: {l}")
 
 
         pred = model_mean + (0.5 * model_log_variance).exp() * noise
@@ -326,11 +326,10 @@ class GaussianDiffusion(nn.Module):
         if gt_fl is not None:
             pose[:, :, 7:9] = gt_fl
 
-
         x_start = None
 
         self.pose_process = []
-        self.pose_process.append(pose.unsqueeze(0))
+        self.pose_process.append([pose.unsqueeze(0)])
 
         pose_r = None
         res_r = None
@@ -341,22 +340,26 @@ class GaussianDiffusion(nn.Module):
             if pose_r is not None:
                 res_r = self.p_sample(x=pose_r, t=t, z=z, cond_fn=cond_fn)
             if len(res) == 3:
-                (pose, l), (pose_r, l_r), _ = res
+                (pose, self.l), (pose_r, self.l_r), _ = res
             else:
-                (pose, l), _ = res
+                (pose, self.l), _ = res
 
             if res_r is not None:
                 (pose_r, l_r), _ = res_r
+                pose_process_entry = [pose.unsqueeze(0), pose_r.unsqueeze(0)]
+            else:
+                pose_process_entry = [pose.unsqueeze(0)]
 
             if gt_fl is not None:
                 pose[:, :, 7:9] = gt_fl
-            self.pose_process.append(pose.unsqueeze(0))
+            self.pose_process.append(pose_process_entry)
 
         if pose_r is not None:
-            if l_r < l:
+            if l_r < self.l:
                 print("REVERSED!")
-                return pose_r, torch.cat(self.pose_process)
-        return pose, torch.cat(self.pose_process)
+                self.l = l_r
+                return pose_r, self.pose_process
+        return pose, self.pose_process
 
     @torch.no_grad()
     def sample(self, shape, z, cond_fn=None, init_pose=None, gt_fl=None):
@@ -365,14 +368,40 @@ class GaussianDiffusion(nn.Module):
         return sample_fn(shape, z=z, cond_fn=cond_fn, init_pose=init_pose, gt_fl=gt_fl)
 
     @torch.no_grad()
-    def continue_sample(self, pose_process, start, shape, z, cond_fn=None, init_pose=None):
+    def continue_sample(self, pose_process, start, shape, z, cond_fn=None, init_pose=None, gt_fl=None):
         print("disabling retries")
-        pose = pose_process[-1].squeeze(0)
-        for t in reversed(range(0, start)):
-            pose, _ = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn, disable_retry=True)
-            pose_process.append(pose.unsqueeze(0))
+        pose_r = None
+        res_r = None
+        if len(pose_process[-1]) == 2:
+            pose = pose_process[-1][0].squeeze(0)
+            pose_r = pose_process[-1][1].squeeze(0)
+        else:
+            pose = pose_process[-1][0].squeeze(0)
+        for t in reversed(range(0, 10)):
+            res = self.p_sample(x=pose, t=t, z=z, cond_fn=cond_fn, disable_retry=True)
 
-        return pose, torch.cat(pose_process)
+            if pose_r is not None:
+                res_r = self.p_sample(x=pose_r, t=t, z=z, cond_fn=cond_fn, disable_retry=True)
+            if len(res) == 3:
+                (pose, self.l), (pose_r, l_r), _ = res
+            else:
+                (pose, self.l), _ = res
+
+            if res_r is not None:
+                (pose_r, l_r), _ = res_r
+
+            if gt_fl is not None:
+                pose[:, :, 7:9] = gt_fl
+
+            pose_process.append([pose.unsqueeze(0)])
+
+        if pose_r is not None:
+            if l_r < self.l:
+                print("REVERSED!")
+                self.l = l_r
+                return pose_r, pose_process
+
+        return pose, pose_process
 
     def p_losses(self, x_start, t, z=None, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))

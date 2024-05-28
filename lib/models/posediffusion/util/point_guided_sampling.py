@@ -21,13 +21,52 @@ from pytorch3d.structures.pointclouds import *
 from pytorch3d.vis.plotly_vis import plot_scene, AxisArgs
 import time
 import csv
+from transforms3d.quaternions import qinverse, rotate_vector, qmult
 
+VARIANTS_ANGLE_SIN = 'sin'
+VARIANTS_ANGLE_COS = 'cos'
+
+def quat_angle_error(label, pred, variant=VARIANTS_ANGLE_SIN) -> np.ndarray:
+    assert label.shape == (4,)
+    assert pred.shape == (4,)
+    assert variant in (VARIANTS_ANGLE_SIN, VARIANTS_ANGLE_COS), \
+        f"Need variant to be in ({VARIANTS_ANGLE_SIN}, {VARIANTS_ANGLE_COS})"
+
+    if len(label.shape) == 1:
+        label = np.expand_dims(label, axis=0)
+    if len(label.shape) != 2 or label.shape[0] != 1 or label.shape[1] != 4:
+        raise RuntimeError(f"Unexpected shape of label: {label.shape}, expected: (1, 4)")
+
+    if len(pred.shape) == 1:
+        pred = np.expand_dims(pred, axis=0)
+    if len(pred.shape) != 2 or pred.shape[0] != 1 or pred.shape[1] != 4:
+        raise RuntimeError(f"Unexpected shape of pred: {pred.shape}, expected: (1, 4)")
+
+    label = label.astype(np.float64)
+    pred = pred.astype(np.float64)
+
+    q1 = pred / np.linalg.norm(pred, axis=1, keepdims=True)
+    q2 = label / np.linalg.norm(label, axis=1, keepdims=True)
+    if variant == VARIANTS_ANGLE_COS:
+        d = np.abs(np.sum(np.multiply(q1, q2), axis=1, keepdims=True))
+        d = np.clip(d, a_min=-1, a_max=1)
+        angle = 2. * np.degrees(np.arccos(d))
+    elif variant == VARIANTS_ANGLE_SIN:
+        if q1.shape[0] != 1 or q2.shape[0] != 1:
+            raise NotImplementedError(f"Multiple angles is todo")
+        # https://www.researchgate.net/post/How_do_I_calculate_the_smallest_angle_between_two_quaternions/5d6ed4a84f3a3e1ed3656616/citation/download
+        sine = qmult(q1[0], qinverse(q2[0]))  # note: takes first element in 2D array
+        # 114.59 = 2. * 180. / pi
+        angle = np.arcsin(np.linalg.norm(sine[1:], keepdims=True)) * 114.59155902616465
+        angle = np.expand_dims(angle, axis=0)
+
+    return angle.astype(np.float64)
 
 class HighLossException(Exception):
     def __init__(self, loss):
         self.loss = loss
 
-def point_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz, pose_scale, pose_solver_conf):
+def point_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, matches_dict: Dict, uncropped_data: Dict, viz, pose_scale, pose_solver_conf, flip, multi_sample):
     device = model_mean.device
 
     def _to_device(tensor):
@@ -46,25 +85,26 @@ def point_guided_sampling(model_mean: torch.Tensor, t: int, disable_retry, match
 
     pose_encoding_type = "absT_quaR_logFL"
 
-
     # optimise
     model_mean_reverse = None
-    if t == 9:
-        model_mean, rescale_factor, loss = PGS3D_optimize(model_mean, t, uncropped_data, processed_matches, iter_num=25, viz=viz, pose_scale=pose_scale)
+    if flip and t == 9:
+        model_mean, rescale_factor, loss = PGS3D_optimize(model_mean, 10*(9-t), uncropped_data, processed_matches, iter_num=25, viz=viz, pose_scale=pose_scale)
 
         model_mean_reverse = model_mean.detach().clone()
         r = quaternion_to_matrix(model_mean_reverse[0, 1, 3:7])
         model_mean_reverse[0, 1, 3:7] = matrix_to_quaternion(r)
         model_mean_reverse[0, 1, 0] *= -1
 
-        model_mean_reverse, rescale_factor_reverse, loss_reverse = PGS3D_optimize(model_mean_reverse, t, uncropped_data, processed_matches, iter_num=30, viz=viz, pose_scale=pose_scale)
+        model_mean_reverse, rescale_factor_reverse, loss_reverse = PGS3D_optimize(model_mean_reverse, 10*(9-t), uncropped_data, processed_matches, iter_num=30, viz=viz, pose_scale=pose_scale)
 
-        # print(f"loss: {loss}")
-        # if loss_reverse < loss:
-        #     print("reversed!")
-        #     model_mean = model_mean_reverse
+        if multi_sample and not disable_retry:
+            raise HighLossException(min(loss.item(), loss_reverse.item()))
+    elif t == 9:
+        model_mean, rescale_factor, loss = PGS3D_optimize(model_mean, 10*(9-t), uncropped_data, processed_matches, viz=viz, pose_scale=pose_scale)
+        if multi_sample and not disable_retry:
+            raise HighLossException(loss.item())
     else:
-        model_mean, rescale_factor, loss = PGS3D_optimize(model_mean, t, uncropped_data, processed_matches, viz=viz, pose_scale=pose_scale)
+        model_mean, rescale_factor, loss = PGS3D_optimize(model_mean, 10*(9-t), uncropped_data, processed_matches, viz=viz, pose_scale=pose_scale)
         # print(f"loss: {loss}")
 
     # pred_cameras = pose_encoding_to_visdom(model_mean, pose_encoding_type)
@@ -151,6 +191,20 @@ def PGS3D_optimize(
             optimizer.step()
 
         model_mean = model_mean.detach()
+
+    # try:
+    #     pose_encoding_type = "absT_quaR_logFL"
+    #     pred_cameras = pose_encoding_to_visdom(model_mean, pose_encoding_type)
+    #     shape = torch.tensor([[224, 224], [224, 224]])
+    #     gt_pose = convert_data_to_perspective_camera(uncropped_data)
+    #     pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
+    #     rel_pred_R = quaternion_multiply(matrix_to_quaternion(pred_R[0]), quaternion_invert(matrix_to_quaternion(pred_R[1])))
+    #     gt_R, gt_T, gt_K = opencv_from_visdom_projection(gt_pose, shape)
+    #     rel_gt_R = quaternion_multiply(matrix_to_quaternion(gt_R[0]), quaternion_invert(matrix_to_quaternion(gt_R[1])))
+    #     print(f"{t}, {loss.item()}, {quat_angle_error(label=rel_pred_R, pred=rel_gt_R, variant='sin')[0, 0]}, {torch.norm(torch.subtract((pred_T[1] / rescale_factor) - pred_T[0], gt_T[1] - gt_T[0]))}")
+    # except Exception as e:
+    #     print(e)
+    #     pass
 
     return model_mean, rescale_factor, loss
 

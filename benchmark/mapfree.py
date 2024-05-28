@@ -77,7 +77,7 @@ def compute_scene_metrics(dataset_path: Path, submission_zip: ZipFile, scene: st
 def argmedian(x):
   return np.argpartition(x, len(x) // 2)[len(x) // 2]
 
-def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_cutoff=0):
+def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_cutoff=0, conf_cutoff=0):
     # aggregate metrics
 
     f = open('results/posediffusionPGS3D_FLIP/detailed_res.txt', mode='w')
@@ -116,10 +116,14 @@ def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_c
 
     median_metrics = defaultdict(list)
     all_metrics = defaultdict(list)
+    count_successes = 0
     for scene_results in all_results.values():
         rot_mask = np.array(scene_results["difficulty_rot"]) > rot_diff_cutoff
         trans_mask = np.array(scene_results["difficulty_trans"]) > trans_diff_cutoff
-        mask = rot_mask & trans_mask
+        conf_mask = np.array(scene_results["confidence"]) >= conf_cutoff
+        mask = (rot_mask & trans_mask) & conf_mask 
+        count_successes += np.sum(mask)
+        all_failures += len(mask) - np.sum(mask)
         for metric, values in scene_results.items():
             values = np.array(values)[mask]
             if len(values) > 0:
@@ -128,6 +132,9 @@ def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_c
     all_metrics = {k: np.array(v) for k, v in all_metrics.items()}
     assert all([v.ndim == 1 for v in all_metrics.values()]
                ), 'invalid metrics shape'
+
+    # print(count_successes)
+    # print(len(all_metrics['trans_err']))
 
     # compute avg median metrics
     avg_median_metrics = {metric: np.mean(
@@ -147,6 +154,10 @@ def aggregate_results(all_results, all_failures, rot_diff_cutoff=0, trans_diff_c
         inliers=all_metrics['confidence'], tp=accepted_poses, failures=all_failures)
     _, _, auc_vcre = precision_recall(
         inliers=all_metrics['confidence'], tp=accepted_vcre, failures=all_failures)
+
+    if all_failures > 0:
+        logging.warning(
+            f'Submission is missing pose estimates for {all_failures} frames')
 
     # output metrics
     output_metrics = dict()
@@ -184,9 +195,9 @@ def main(args):
         all_results[scene] = metrics
         all_failures += failures
 
-    if all_failures > 0:
-        logging.warning(
-            f'Submission is missing pose estimates for {all_failures} frames')
+    # if all_failures > 0:
+    #     logging.warning(
+    #         f'Submission is missing pose estimates for {all_failures} frames')
 
     unexpected_scene_count = count_unexpected_scenes(scenes, submission_zip)
     if unexpected_scene_count > 0:
@@ -199,14 +210,21 @@ def main(args):
         return
 
     # print(all_results)
-    rot_diff_cutoff = args.rotcutoff
-    output_metrics = aggregate_results(all_results, all_failures, rot_diff_cutoff=rot_diff_cutoff)
+    rot_diff_cutoff = int(args.rotcutoff)
+    conf_cutoff = int(args.confcutoff)
+    output_metrics = aggregate_results(all_results, all_failures, rot_diff_cutoff=rot_diff_cutoff, conf_cutoff=conf_cutoff)
     # output_json = json.dumps(output_metrics, indent=2)
     # print(output_json)
 
     name = "results"
     if rot_diff_cutoff:
-        name += str(rot_diff_cutoff)
+        name += ("_" + str(rot_diff_cutoff))
+    else:
+        name += ("_" + str(0))
+    if conf_cutoff:
+        name += ("_" + str(conf_cutoff))
+    else:
+        name += ("_" + str(0))
         
     with open(f"results/{str(args.submission_path).split('/')[1]}/{name}.txt", mode='w', encoding='utf-8') as f:
         json.dump(output_metrics, f, ensure_ascii=False, indent=4)
@@ -224,6 +242,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_path', type=Path, default=None,
                         help='Path to the dataset folder')
     parser.add_argument('--rotcutoff', type=float, default=0)
+    parser.add_argument('--confcutoff', type=float, default=0)
 
     args = parser.parse_args()
 
@@ -232,8 +251,7 @@ if __name__ == '__main__':
         args.dataset_path = Path(cfg.DATASET.DATA_ROOT)
 
     logging.basicConfig(level=args.log.upper())
-    try:
-        main(args)
-    except Exception as e:
-        print(e)
-        logging.error("Unexpected behaviour. Exiting.")
+    main(args)
+    # except Exception as e:
+    #     print(e)
+    #     logging.error("Unexpected behaviour. Exiting.")

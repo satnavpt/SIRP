@@ -66,7 +66,7 @@ def pose_guided_sampling(model_mean: torch.Tensor, t: int, pose_solver_output: t
     # conduct GGS
     # model_mean = PGS_optimize(model_mean, t, pose_solver_output)
 
-    print(f"step: {t}")
+    # print(f"step: {t}")
     
     pose_encoding_type = "absT_quaR_logFL"
 
@@ -76,34 +76,34 @@ def pose_guided_sampling(model_mean: torch.Tensor, t: int, pose_solver_output: t
     gt_R = matrix_to_quaternion(gt_R)
 
     # Optimize FL, R, and T separately
-    model_mean, rescale_factor = PGS_optimize(
-        model_mean, t, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=False, update_R=False, update_FL=True, uncropped_data=uncropped_data, viz=viz)  # only optimize FL
+    model_mean, rescale_factor, _ = PGS_optimize(
+        model_mean, 10*(9-t), pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=False, update_R=False, update_FL=True, uncropped_data=uncropped_data, viz=viz)  # only optimize FL
 
     # pred_R, pred_T, pred_K = opencv_from_visdom_projection(pose_encoding_to_visdom(model_mean, pose_encoding_type), shape)
     # pred_R = matrix_to_quaternion(pred_R)
     # print(f"actual loss: {torch.abs(gt_R - pred_R).sum() + torch.abs(gt_T - (pred_T / rescale_factor)).sum()}")
 
-    model_mean, rescale_factor = PGS_optimize(
-        model_mean, t, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=False, update_R=True, update_FL=False, uncropped_data=uncropped_data, viz=viz)  # only optimize R
+    model_mean, rescale_factor, _ = PGS_optimize(
+        model_mean, 10*(9-t) + 2.5, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=False, update_R=True, update_FL=False, uncropped_data=uncropped_data, viz=viz)  # only optimize R
 
     # pred_R, pred_T, pred_K = opencv_from_visdom_projection(pose_encoding_to_visdom(model_mean, pose_encoding_type), shape)
     # pred_R = matrix_to_quaternion(pred_R)
     # print(f"actual loss: {torch.abs(gt_R - pred_R).sum() + torch.abs(gt_T - (pred_T / rescale_factor)).sum()}")
 
-    model_mean, rescale_factor = PGS_optimize(
-        model_mean, t, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=True, update_R=False, update_FL=False, uncropped_data=uncropped_data, viz=viz)  # only optimize T
+    model_mean, rescale_factor, _ = PGS_optimize(
+        model_mean, 10*(9-t) + 5, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, update_T=True, update_R=False, update_FL=False, uncropped_data=uncropped_data, viz=viz)  # only optimize T
 
     # pred_R, pred_T, pred_K = opencv_from_visdom_projection(pose_encoding_to_visdom(model_mean, pose_encoding_type), shape)
     # pred_R = matrix_to_quaternion(pred_R)
     # print(f"actual loss: {torch.abs(gt_R - pred_R).sum() + torch.abs(gt_T - (pred_T / rescale_factor)).sum()}")
 
-    model_mean, rescale_factor = PGS_optimize(model_mean, t, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, uncropped_data=uncropped_data, viz=viz)
+    model_mean, rescale_factor, loss = PGS_optimize(model_mean, 10*(9-t) + 7.5, pose_solver_output, r_weight=r_weight, t_weight=t_weight, f_weight=f_weight, uncropped_data=uncropped_data, viz=viz)
 
     # pred_R, pred_T, pred_K = opencv_from_visdom_projection(pose_encoding_to_visdom(model_mean, pose_encoding_type), shape)
     # pred_R = matrix_to_quaternion(pred_R)
     # print(f"actual loss: {torch.abs(gt_R - pred_R).sum() + torch.abs(gt_T - (pred_T / rescale_factor)).sum()}")
 
-    return model_mean, rescale_factor
+    return (model_mean, loss), rescale_factor
 
 
 def PGS_optimize(
@@ -173,20 +173,38 @@ def PGS_optimize(
         # relR, relT = relative_pose(R,T)
         # print(f"scale 0: {torch.norm(relT[0])}")
         # print(f"S: {torch.norm(relT)}")
-    # print(f"L: {loss.item()}")
-    pose_encoding_type = "absT_quaR_logFL"
-    pred_cameras = pose_encoding_to_visdom(model_mean, pose_encoding_type)
-    shape = torch.tensor([[224, 224], [224, 224]])
-    gt_pose = convert_data_to_perspective_camera(uncropped_data)
-    pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
-    rel_pred_R = quaternion_multiply(matrix_to_quaternion(pred_R[0]), quaternion_invert(matrix_to_quaternion(pred_R[1])))
-    gt_R, gt_T, gt_K = opencv_from_visdom_projection(gt_pose, shape)
-    rel_gt_R = quaternion_multiply(matrix_to_quaternion(gt_R[0]), quaternion_invert(matrix_to_quaternion(gt_R[1])))
+    try:
+        pose_encoding_type = "absT_quaR_logFL"
+        pred_cameras = pose_encoding_to_visdom(model_mean, pose_encoding_type)
+        shape = torch.tensor([[224, 224], [224, 224]])
+        gt_pose = convert_data_to_perspective_camera(uncropped_data)
+        pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
+        rel_pred_R = quaternion_multiply(matrix_to_quaternion(pred_R[0]), quaternion_invert(matrix_to_quaternion(pred_R[1])))
+        gt_R, gt_T, gt_K = opencv_from_visdom_projection(gt_pose, shape)
+        rel_gt_R = quaternion_multiply(matrix_to_quaternion(gt_R[0]), quaternion_invert(matrix_to_quaternion(gt_R[1])))
+        print(f"{t}, {loss.item()}, {quat_angle_error(label=rel_pred_R, pred=rel_gt_R, variant='sin')[0, 0]}, {torch.norm(torch.subtract((pred_T[1] / rescale_factor) - pred_T[0], gt_T[1] - gt_T[0]))}")
+        # print(f"r: ")
+        # print(f"t: ")
+        if t == 97.5:
+            p = pose_encoding_to_visdom(pose_solver_output, pose_encoding_type)
+            guide_R, guide_T, _ = opencv_from_visdom_projection(p, shape)
+            # guide_T = pose_solver_output[:, :3]
+            # guide_R = pose_solver_output[:, 3:7]
+            rel_guide_R  = quaternion_multiply(matrix_to_quaternion(guide_R[0]), quaternion_invert(matrix_to_quaternion(guide_R[1])))
+            print(f"{quat_angle_error(label=rel_guide_R, pred=rel_gt_R, variant='sin')[0, 0]}, {torch.norm(torch.subtract((guide_T[1]/rescale_factor) - guide_T[0], gt_T[1] - gt_T[0]))}")
+            # print(rel_gt_R)
+            # print(rel_pred_R)
+            # print(rel_guide_R)
 
-    # print(f"r: {quat_angle_error(label=rel_pred_R, pred=rel_gt_R, variant='sin')[0, 0]}")
-    print(f"t: {torch.norm(torch.subtract((pred_T[1] / rescale_factor) - pred_T[0], gt_T[1] - gt_T[0]))}")
+            # print(gt_T)
+            # print(pred_T)
+            # print(guide_T)
+            # exit()
+    except Exception as e:
+        print(e)
+        pass
 
-    return model_mean, rescale_factor
+    return model_mean, rescale_factor, loss
 
 
 # def compute_relative_pose_distance(
@@ -267,9 +285,7 @@ def compute_pose_distance(
 
     camera2 = pose_encoding_to_visdom(pose_solver_output_c, pose_encoding_type)
 
-
-    gt_pose = convert_data_to_perspective_camera(uncropped_data)
-
+    # gt_pose = convert_data_to_perspective_camera(uncropped_data)
 
     # pick the mean of the predicted focal length
     F1 = camera1.focal_length.mean(dim=0).repeat(len(camera1.focal_length), 1)

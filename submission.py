@@ -150,9 +150,9 @@ def predict(loader, model, output_root):
             ('s00517', 'seq1/frame_00290.jpg'),
             ('s00497', 'seq1/frame_00465.jpg')]
         """
-        selected_frames = [('s00523', 'seq1/frame_00005.jpg')]
+        selected_frames = [('s00585', 'seq1/frame_00460.jpg'),('s00623', 'seq1/frame_00295.jpg')]
         # if (scene_id, q_frame) not in selected_frames:
-        #     continue
+            # continue
         data = data_to_model_device(data, model)
         with torch.no_grad():
             results = model(data)

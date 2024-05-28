@@ -39,7 +39,7 @@ from ..util.load_img_folder import preprocess_images
 from ..util.geometry_guided_sampling import geometry_guided_sampling
 from ..util.pose_guided_sampling import pose_guided_sampling
 from ..util.point_guided_sampling import point_guided_sampling, HighLossException
-from ..util.point_guided_sampling_2d3d import point_guided_sampling_2d3d, HighLossException
+from ..util.point_guided_sampling_2d3d import point_guided_sampling_2d3d
 from ..util.line_guided_sampling import line_guided_sampling
 from ..util.line_guided_sampling_vec import line_guided_sampling_vec
 from ..util.resolve_scale import resolve_scale
@@ -60,7 +60,6 @@ from visdom import Visdom
 from pytorch3d.ops import corresponding_cameras_alignment 
 
 from typing import NamedTuple
-
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +119,13 @@ class PoseDiffusionModel(nn.Module):
 
         self.crop = cfg.image_size
 
-        if torch.cuda.is_available():
-            self.viz = None #Visdom()
-        else:
-            self.viz = Visdom()
+        # if torch.cuda.is_available():
+        #     self.viz = None #Visdom()
+        # else:
+        #     self.viz = Visdom()
+    
+        self.viz = None
+            
         self.i = 0
         self.ransac_scale_threshold = cfg.EMAT_RANSAC.SCALE_THRESHOLD
         self.ransac_pix_threshold = cfg.EMAT_RANSAC.PIX_THRESHOLD
@@ -133,14 +135,16 @@ class PoseDiffusionModel(nn.Module):
             self.fm = SIFTMatching(cfg)
         elif cfg.FEATURE_MATCHING == 'Precomputed':
             self.fm = PrecomputedMatching(cfg)
+        elif cfg.FEATURE_MATCHING == 'PrecomputedGLUE':
+            self.fm = PrecomputedGLUEMatching(cfg)
         elif cfg.FEATURE_MATCHING == 'MultiplePrecomputed':
             self.fm = MultiplePrecomputedMatching(cfg)
         elif cfg.FEATURE_MATCHING == "HLOC":
             self.fm = HLOCMatching(cfg)
         elif cfg.FEATURE_MATCHING == "GLUE":
             self.fm = GLUEMatching(cfg)
-        elif cfg.FEATURE_MATCHING == "DUST3R":
-            self.fm = DUST3RMatching(cfg)
+        # elif cfg.FEATURE_MATCHING == "DUST3R":
+        #     self.fm = DUST3RMatching(cfg)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -161,28 +165,35 @@ class PoseDiffusionModel(nn.Module):
             K = torch.cat((uncropped_data['K_color0'], uncropped_data['K_color1'])).to(dtype=torch.float32)
             id = torch.tensor([uncropped_data['image0'].shape[1], uncropped_data['image0'].shape[2]])
             R, T = self.pose_solver.forward(uncropped_data)
-            R = R.float().squeeze()
-            T = T.float().reshape(-1)
-            
-            I = torch.eye(3)
-            Rs = torch.stack((I, R))
-            Ts = torch.stack((torch.zeros(3), T))
-            if torch.isnan(R).any() or torch.isnan(T).any():
-                pose_solver_output_1 = None
-                print("pose solver output contains nans")
-            else:
-                pose_solver_output_1 = convert_pose_solver_to_perspective_camera(Rs, Ts, K, id)
-                pose_solver_conf = uncropped_data['inliers']
-                print("pose solver output doesnt contain nans")
-
-            pose_solver_output_2 = None #convert_pose_solver_to_perspective_camera(Rs, Ts, K, id)
-            if self.INIT_POSE.enable:
-                if pose_solver_output_1 is None:
-                    init_poses = None
+            if (R is not None) and (T is not None):
+                R = R.float().squeeze()
+                T = T.float().reshape(-1)
+                
+                I = torch.eye(3)
+                Rs = torch.stack((I, R))
+                Ts = torch.stack((torch.zeros(3), T))
+                if torch.isnan(R).any() or torch.isnan(T).any():
+                    pose_solver_output_1 = None
+                    pose_solver_conf = 0
+                    print("pose solver output contains nans")
                 else:
-                    init_poses = pose_solver_camera_to_pose_encoding(pose_solver_output_1).unsqueeze(0)
+                    pose_solver_output_1 = convert_pose_solver_to_perspective_camera(Rs, Ts, K, id)
+                    pose_solver_conf = uncropped_data['inliers']
+                    print("pose solver output doesnt contain nans")
+
+                pose_solver_output_2 = None #convert_pose_solver_to_perspective_camera(Rs, Ts, K, id)
+                if self.INIT_POSE.enable:
+                    if pose_solver_output_1 is None:
+                        init_poses = None
+                    else:
+                        init_poses = pose_solver_camera_to_pose_encoding(pose_solver_output_1).unsqueeze(0)
+                else:
+                    init_poses = None
             else:
+                pose_solver_output_1 = None
+                pose_solver_output_2 = None
                 init_poses = None
+                pose_solver_conf = uncropped_data['inliers']
         else:
             pose_solver_output_1 = None
             pose_solver_output_2 = None
@@ -238,19 +249,24 @@ class PoseDiffusionModel(nn.Module):
             i12 = np.repeat(np.array([[0., 1.]]), len(kp1), axis=0)
 
             if (kp1 is not None) and (len(kp1) != 0) and (pose_solver_conf is not None):# and (pose_solver_conf > 10):
-                if pose_solver_conf <= 5:
-                    return None, None, None
-                if pose_solver_conf > 10:
+                # if pose_solver_conf <= 5:
+                    # return None, None, None
+                if self.PGS3D.enable_at is None:
+                    self.PGS3D.enable_at = 0
+                if self.PGS3D.multi_sample is None:
+                    self.PGS3D.multi_sample = False
+                if pose_solver_conf > self.PGS3D.enable_at:
                     print("PGS3D IS ACTIVE")
                     keys = ["kp1", "kp2", "i12", "img_shape"]
                     values = [kp1, kp2, i12, images.shape]
                     matches_dict = dict(zip(keys, values))
 
                     self.PGS3D.pose_encoding_type = self.pose_encoding_type
+                    if self.PGS3D.flip is None:
+                        self.PGS3D.flip = True
                     if pose_solver_output_1 is not None:
                         cam2_scale = torch.norm(pose_solver_output_1.T)
-                        # cam2_scale = cam2_scale.detach()
-                        fn = (partial(point_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, pose_scale=cam2_scale, pose_solver_conf=pose_solver_conf), [10, 0])
+                        fn = (partial(point_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, pose_scale=cam2_scale, pose_solver_conf=pose_solver_conf, flip=self.PGS3D.flip, multi_sample=self.PGS3D.multi_sample), [10, 0])
                         if cond_fn is None:
                             cond_fn = fn
                         elif type(cond_fn) is list:
@@ -263,18 +279,23 @@ class PoseDiffusionModel(nn.Module):
             i12 = np.repeat(np.array([[0., 1.]]), len(kp1), axis=0)
 
             if (kp1 is not None) and (len(kp1) != 0) and (pose_solver_conf is not None):# and (pose_solver_conf > 10):
-                if pose_solver_conf <= 5:
-                    return None, None, None
-                if pose_solver_conf > 10:
+                # if pose_solver_conf <= 5:
+                    # return None, None, None
+                if self.PGS2D3D.enable_at is None:
+                    self.PGS2D3D.enable_at = 0
+                if self.PGS2D3D.multi_sample is None:
+                    self.PGS2D3D.multi_sample = False
+                if pose_solver_conf > self.PGS2D3D.enable_at:
                     keys = ["kp1", "kp2", "i12", "img_shape"]
                     values = [kp1, kp2, i12, images.shape]
                     matches_dict = dict(zip(keys, values))
 
                     self.PGS2D3D.pose_encoding_type = self.pose_encoding_type
+                    if self.PGS2D3D.flip is None:
+                        self.PGS2D3D.flip = True
                     if pose_solver_output_1 is not None:
                         cam2_scale = torch.norm(pose_solver_output_1.T)
-                        # cam2_scale = cam2_scale.detach()
-                        fn = (partial(point_guided_sampling_2d3d, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, pose_scale=cam2_scale, pose_solver_conf=pose_solver_conf), [10, 0])
+                        fn = (partial(point_guided_sampling_2d3d, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, pose_scale=cam2_scale, pose_solver_conf=pose_solver_conf, flip=self.PGS2D3D.flip, multi_sample=self.PGS2D3D.multi_sample), [10, 0])
                         if cond_fn is None:
                             cond_fn = fn
                         elif type(cond_fn) is list:
@@ -309,7 +330,9 @@ class PoseDiffusionModel(nn.Module):
                 matches_dict = dict(zip(keys, values))
 
                 self.LGS.pose_encoding_type = self.pose_encoding_type
-                fn = (partial(line_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz), [10, 0])
+                if self.LGS.flip is None:
+                    self.LGS.flip = True
+                fn = (partial(line_guided_sampling, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, flip=self.LGS.flip), [10, 0])
                 if cond_fn is None:
                     cond_fn = fn
                 elif type(cond_fn) is list:
@@ -327,7 +350,9 @@ class PoseDiffusionModel(nn.Module):
                 matches_dict = dict(zip(keys, values))
 
                 self.LGSV.pose_encoding_type = self.pose_encoding_type
-                fn = (partial(line_guided_sampling_vec, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz), [10, 0])
+                if self.LGSV.flip is None:
+                    self.LGSV.flip = True
+                fn = (partial(line_guided_sampling_vec, matches_dict=matches_dict, uncropped_data=uncropped_data, viz=self.viz, flip=self.LGSV.flip), [10, 0])
                 if cond_fn is None:
                     cond_fn = fn
                 elif type(cond_fn) is list:
@@ -349,10 +374,13 @@ class PoseDiffusionModel(nn.Module):
             uncropped_data['inliers'] = 0
 
             pred_R, pred_T, pred_K = opencv_from_visdom_projection(pred_cameras, shape)
-            relativeR_quat = quaternion_multiply(torch.from_numpy(mat2quat(pred_R[1].cpu().numpy())), quaternion_invert(torch.from_numpy(mat2quat(pred_R[0].cpu().numpy()))))
-            relativeR = torch.from_numpy(quat2mat(relativeR_quat.cpu())).unsqueeze(0)
+            try:
+                relativeR_quat = quaternion_multiply(torch.from_numpy(mat2quat(pred_R[1].cpu().numpy())), quaternion_invert(torch.from_numpy(mat2quat(pred_R[0].cpu().numpy()))))
+                relativeR = torch.from_numpy(quat2mat(relativeR_quat.cpu())).unsqueeze(0)
             
-            relativeT = pred_T[1] - pred_T[0]
+                relativeT = pred_T[1] - pred_T[0]
+            except:
+                return None, None, None
         elif len(result) == 3:
             relativeR, relativeT, conf = result
 
@@ -538,8 +566,11 @@ class PoseDiffusionModel(nn.Module):
 
                 return pose_encoding_to_visdom(pose_encodings[0], pose_encoding_type=self.pose_encoding_type, return_dict=False), conf
             elif self.PGS3D.enable:
+                if self.PGS3D.confidence is None:
+                    self.PGS3D.confidence = "correspondences"
                 attempts_remaining = 3
                 best_diffuser_loss = float('inf')
+                all_poses = []
                 best_diffuser_start = None
                 best_diffuser_pose_process = None
                 print(f"PGS3D: attempts remaining: {attempts_remaining}!!!")
@@ -549,12 +580,23 @@ class PoseDiffusionModel(nn.Module):
                         (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.sample(
                             shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
                         )
+                        if self.PGS3D.confidence == "loss":
+                            if self.diffuser.l > 0:
+                                pose_solver_conf = int(np.round(1000/self.diffuser.l.item()))
+                            else:
+                                pose_solver_conf = 0
+                        elif self.PGS3D.confidence == "correspondenceloss":
+                            if pose_solver_conf is not None and pose_solver_conf > 0:
+                                pose_solver_conf = int(np.round(pose_solver_conf*10/self.diffuser.l.item()))
+                            else:
+                                pose_solver_conf = 0
                         if pose_solver_conf is not None:
                             print(f"confidence in pose_solver: {pose_solver_conf}")
                         pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
                         break
                     except HighLossException as e:
-                        print(f"PGS3D doesn't agree with diffusion output!!! loss is: {e.loss}")
+                        print(f"HLE!!! loss is: {e.loss}")
+                        all_poses.append(self.diffuser.pose_process)
                         if e.loss < best_diffuser_loss:
                             print("This was the best sample so far though - saving...")
                             best_diffuser_loss = e.loss
@@ -566,15 +608,66 @@ class PoseDiffusionModel(nn.Module):
                         else:
                             print("Out of attempts, going to use best sample so far!!!")
                             (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.continue_sample(best_diffuser_pose_process, best_diffuser_start,
-                                shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+                                shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init, gt_fl=gt_logfl
                             )
+                            if self.PGS3D.confidence == "loss":
+                                pose_solver_conf = int(np.round(1000/self.diffuser.l.item()))
+                            elif self.PGS3D.confidence == "variance":
+                                last_poses = torch.stack([p[-1][0] for p in all_poses])
+                                # print(last_poses)
+                                # print(last_poses.shape)
+                                pose_solver_conf = int(np.round(1 / torch.mean(torch.var(last_poses, dim=0)).item()))
+                            elif self.PGS3D.confidence == "correspondenceloss":
+                                if pose_solver_conf is not None:
+                                    pose_solver_conf = int(np.round(pose_solver_conf*10/self.diffuser.l.item()))
+                                else:
+                                    pose_solver_conf = 0
+                                
                             if pose_solver_conf is not None:
                                 print(f"confidence in pose_solver: {pose_solver_conf}")
                             pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
                             break
+            # elif self.PGS2D3D.enable:
+            #     attempts_remaining = 3
+            #     best_diffuser_loss = float('inf')
+            #     best_diffuser_start = None
+            #     best_diffuser_pose_process = None
+            #     print(f"PGS2D3D: attempts remaining: {attempts_remaining}!!!")
+            #     while attempts_remaining >= 0:
+            #         print(f"PGS2D3D: attempt {4 - attempts_remaining}!!!")
+            #         try:
+            #             (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.sample(
+            #                 shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+            #             )
+            #             if pose_solver_conf is not None:
+            #                 print(f"confidence in pose_solver: {pose_solver_conf}")
+            #             pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
+            #             break
+            #         except HighLossException as e:
+            #             print(f"PGS2D3D doesn't agree with diffusion output!!! loss is: {e.loss}")
+            #             if e.loss < best_diffuser_loss:
+            #                 print("This was the best sample so far though - saving...")
+            #                 best_diffuser_loss = e.loss
+            #                 best_diffuser_start = self.diffuser.start
+            #                 best_diffuser_pose_process = self.diffuser.pose_process
+            #             if attempts_remaining > 0:
+            #                 print("Going to generate another diffusion sample!!!")
+            #                 attempts_remaining -= 1
+            #             else:
+            #                 print("Out of attempts, going to use best sample so far!!!")
+            #                 (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.continue_sample(best_diffuser_pose_process, best_diffuser_start,
+            #                     shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+            #                 )
+            #                 if pose_solver_conf is not None:
+            #                     print(f"confidence in pose_solver: {pose_solver_conf}")
+            #                 pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
+            #                 break
             elif self.PGS2D3D.enable:
+                if self.PGS2D3D.confidence is None:
+                    self.PGS2D3D.confidence = "correspondences"
                 attempts_remaining = 3
                 best_diffuser_loss = float('inf')
+                all_poses = []
                 best_diffuser_start = None
                 best_diffuser_pose_process = None
                 print(f"PGS2D3D: attempts remaining: {attempts_remaining}!!!")
@@ -584,12 +677,24 @@ class PoseDiffusionModel(nn.Module):
                         (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.sample(
                             shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
                         )
+                        if self.PGS2D3D.confidence == "loss":
+                            if self.diffuser.l > 0:
+                                pose_solver_conf = int(np.round(1000/self.diffuser.l.item()))
+                            else:
+                                pose_solver_conf = 0
+                        elif self.PGS2D3D.confidence == "correspondenceloss":
+                            if pose_solver_conf is not None and pose_solver_conf > 0:
+                                print(pose_solver_conf)
+                                pose_solver_conf = int(np.round(pose_solver_conf*10/self.diffuser.l.item()))
+                            else:
+                                pose_solver_conf = 0
                         if pose_solver_conf is not None:
                             print(f"confidence in pose_solver: {pose_solver_conf}")
                         pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
                         break
                     except HighLossException as e:
-                        print(f"PGS2D3D doesn't agree with diffusion output!!! loss is: {e.loss}")
+                        print(f"HLE!!! loss is: {e.loss}")
+                        all_poses.append(self.diffuser.pose_process)
                         if e.loss < best_diffuser_loss:
                             print("This was the best sample so far though - saving...")
                             best_diffuser_loss = e.loss
@@ -601,8 +706,16 @@ class PoseDiffusionModel(nn.Module):
                         else:
                             print("Out of attempts, going to use best sample so far!!!")
                             (pose_encoding, pose_encoding_diffusion_samples) = self.diffuser.continue_sample(best_diffuser_pose_process, best_diffuser_start,
-                                shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init
+                                shape=target_shape, z=z, cond_fn=cond_fn, init_pose=denoise_init, gt_fl=gt_logfl
                             )
+                            if self.PGS2D3D.confidence == "loss":
+                                pose_solver_conf = int(np.round(1000/self.diffuser.l.item()))
+                            elif self.PGS2D3D.confidence == "variance":
+                                last_poses = torch.stack([p[-1][0] for p in all_poses])
+                                pose_solver_conf = int(np.round(1 / torch.mean(torch.var(last_poses, dim=0)).item()))
+                            elif self.PGS2D3D.confidence == "correspondenceloss":
+                                pose_solver_conf = int(np.round(pose_solver_conf*10/self.diffuser.l.item()))
+                                
                             if pose_solver_conf is not None:
                                 print(f"confidence in pose_solver: {pose_solver_conf}")
                             pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
@@ -616,7 +729,8 @@ class PoseDiffusionModel(nn.Module):
                     print(f"confidence in pose_solver: {pose_solver_conf}")
                 pred_cams = pose_encoding_to_visdom(pose_encoding, pose_encoding_type=self.pose_encoding_type, return_dict=False)
 
-            pred_cams_process = [pose_encoding_to_visdom(p, pose_encoding_type=self.pose_encoding_type, return_dict=False) for p in pose_encoding_diffusion_samples]
+            # pred_cams_process = [pose_encoding_to_visdom(p[0], pose_encoding_type=self.pose_encoding_type, return_dict=False) for p in pose_encoding_diffusion_samples]
+            pred_cams_process = []
 
             if self.GT_ALIGN.enable:
                 pred_cams_aligned = corresponding_cameras_alignment(
@@ -667,7 +781,10 @@ class PoseDiffusionModel(nn.Module):
                     fig = plot_scene({f"{1}": cams_show}, axis_args=AxisArgs(showgrid=True))
                     self.viz.plotlyplot(fig, env="main", win=f"{1}")
                     # self.i += 1
-                return pred_cams, 0
+                if pose_solver_conf is not None:
+                    return pred_cams, pose_solver_conf
+                else:
+                    return pred_cams, 0
             elif self.PGS3D.enable:
                 if self.viz is not None:
                     d = {}
@@ -685,6 +802,8 @@ class PoseDiffusionModel(nn.Module):
                     self.viz.plotlyplot(fig, env="main", win=f"{1}")
                 if pose_solver_conf is not None:
                     return pred_cams, pose_solver_conf
+                else:
+                    return pred_cams, 0
             elif self.PGS2D3D.enable:
                 if self.viz is not None:
                     d = {}
@@ -702,6 +821,8 @@ class PoseDiffusionModel(nn.Module):
                     self.viz.plotlyplot(fig, env="main", win=f"{1}")
                 if pose_solver_conf is not None:
                     return pred_cams, pose_solver_conf
+                else:
+                    return pred_cams, 0
             elif self.RESOLVE_SCALE.enable or self.RESOLVE_SCALE_POINTS.enable:
                 if scale_resolver is not None:
                     R, t = scale_resolver(pred_cams)

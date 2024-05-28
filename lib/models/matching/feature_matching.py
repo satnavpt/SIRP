@@ -92,7 +92,76 @@ class PrecomputedMatching:
         else:
             pts1 = pts2 = np.array([])
 
+        max_matches = 150
+        if pts1.shape[0] > max_matches:
+            choices = np.random.choice(pts1.shape[0], max_matches, replace=False)
+
+            pts1 = pts1[choices, :]
+            pts2 = pts2[choices, :]
+            print(pts1.shape)
+            print(pts2.shape)
+
         return pts1, pts2
+
+class PrecomputedGLUEMatching:
+    '''Get correspondences from pre-computed file'''
+
+    def __init__(self, cfg):
+        # Scannet correspondences are stored in a single file, pointed by MATCHES_FILE_PATH
+        # 7Scenes correspondences are split in a file per scene and dependent on the pairs.
+        # The 7Scenes file pattern (including {scene_id} and {test_pairs} tags) is stored in MATCHES_FILE_PATH
+
+        self.correspondences = None
+        self.debug = cfg.DEBUG
+
+        # If there is a pattern, save that string pattern, and will load correspondences once the scene_id is defined
+        if '{' in cfg.MATCHES_FILE_PATH:
+            self.matches_file_path = cfg.MATCHES_FILE_PATH
+            self.scene_id = None
+            self.pairs_txt = cfg.DATASET.PAIRS_TXT.TEST
+        else:
+            self.load_correspondences(cfg.MATCHES_FILE_PATH)
+
+    def load_correspondences(self, file_path):
+        data = np.load(file_path, allow_pickle=True)
+        self.correspondences = data['correspondences'].astype(np.float32)
+        self.lines = data['line_correspondences']
+
+    def get_correspondences(self, data):
+        # Check if loaded scene_id is still valid (in the case where correspondences are stored over multiple files)
+        # If not, load the correct scene_id correspondences
+        if hasattr(self, 'scene_id'):
+            if self.scene_id != data['scene_id'][0]:
+                self.scene_id = data['scene_id'][0]
+                scene_root = data['scene_root'][0]
+                matches_fpath = self.matches_file_path.format(
+                    scene_root=scene_root, pairs_txt=self.pairs_txt)
+                self.load_correspondences(matches_fpath)
+
+        # get correspondences for the given pair
+        pair_id = data['pair_id'].item()
+        corr = self.correspondences[pair_id]
+
+        # remove nan's (filler)
+        corr = corr[~np.isnan(corr)].reshape(-1, 4)
+        if len(corr) > 0:
+            pts1, pts2 = corr[:, :2], corr[:, 2:]
+        else:
+            pts1 = pts2 = np.array([])
+
+        pair_id = data['pair_id'].item()
+        corr = self.lines[pair_id]
+
+        # remove nan's (filler)
+        corr = corr[~np.isnan(corr)].reshape(-1, 8)
+        if len(corr) > 0:
+            lis1, lis2 = corr[:, :4], corr[:, 4:]
+        else:
+            lis1 = lis2 = np.array([])
+
+        # print(lis1.shape)
+        # print(lis2.shape)
+        return pts1, pts2, lis1, lis2
 
 class MultiplePrecomputedMatching:
     '''Get correspondences from multiple pre-computed files'''
@@ -143,6 +212,18 @@ class MultiplePrecomputedMatching:
             pts1, pts2 = corr[:, :2], corr[:, 2:]
         else:
             pts1 = pts2 = np.array([])
+
+        print(pts1.shape)
+        # print(pts2.shape)
+
+        # max_matches = 100
+        # if pts1.shape[0] > max_matches:
+        #     choices = np.random.choice(pts1.shape[0], max_matches, replace=False)
+
+        #     pts1 = pts1[choices, :]
+        #     pts2 = pts2[choices, :]
+        #     print(pts1.shape)
+        #     print(pts2.shape)
 
         return pts1, pts2
 

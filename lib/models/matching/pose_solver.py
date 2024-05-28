@@ -271,9 +271,9 @@ class PnPSolver:
 
     def __init__(self, cfg):
         # PnP RANSAC parameters
-        self.ransac_iterations = cfg.PNP.RANSAC_ITER
-        self.reprojection_inlier_threshold = cfg.PNP.REPROJECTION_INLIER_THRESHOLD
-        self.confidence = cfg.PNP.CONFIDENCE
+        self.ransac_iterations = cfg.RANSAC_ITER
+        self.reprojection_inlier_threshold = cfg.REPROJECTION_INLIER_THRESHOLD
+        self.confidence = cfg.CONFIDENCE
 
     def estimate_pose(self, pts0, pts1, data):
         # uses nearest neighbour
@@ -283,7 +283,7 @@ class PnPSolver:
             return np.full((3, 3), np.nan), np.full((3, 1), np.nan), 0
 
         # get depth at correspondence points
-        depth_0 = data['depth0'].squeeze(0)
+        depth_0 = data['depth0'].squeeze(0).cpu().numpy()
         depth_pts0 = depth_0[pts0[:, 1], pts0[:, 0]]
 
         # remove invalid pts (depth == 0)
@@ -295,21 +295,21 @@ class PnPSolver:
         depth_pts0 = depth_pts0[valid]
 
         # backproject points to 3D in each sensors' local coordinates
-        K0 = data['K_color0'].squeeze(0)
-        K1 = data['K_color1'].squeeze(0)
-        xyz_0 = backproject_3d(pts0, depth_pts0, K0).numpy()
+        K0 = data['K_color0'].squeeze(0).cpu().numpy()
+        K1 = data['K_color1'].squeeze(0).cpu().numpy()
+        xyz_0 = backproject_3d(pts0, depth_pts0, K0)
 
         # get relative pose using PnP + RANSAC
         succ, rvec, tvec, inliers = cv.solvePnPRansac(
-            xyz_0, pts1, K1.numpy(),
+            xyz_0, pts1, K1,
             None, iterationsCount=self.ransac_iterations,
             reprojectionError=self.reprojection_inlier_threshold, confidence=self.confidence,
             flags=cv.SOLVEPNP_P3P)
 
         # refine with iterative PnP using inliers only
         if succ and len(inliers) >= 6:
-            succ, rvec, tvec, _ = cv.solvePnPGeneric(xyz_0[inliers], pts1[inliers], K1.numpy(
-            ), None, useExtrinsicGuess=True, rvec=rvec, tvec=tvec, flags=cv.SOLVEPNP_ITERATIVE)
+            succ, rvec, tvec, _ = cv.solvePnPGeneric(xyz_0[inliers], pts1[inliers], K1,
+             None, useExtrinsicGuess=True, rvec=rvec, tvec=tvec, flags=cv.SOLVEPNP_ITERATIVE)
             rvec = rvec[0]
             tvec = tvec[0]
 

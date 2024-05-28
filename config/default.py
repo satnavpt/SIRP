@@ -39,15 +39,25 @@ _CN.PGS.f_weight = None
 
 _CN.PGS3D = CN()
 _CN.PGS3D.enable = None
+_CN.PGS3D.enable_at = None
+_CN.PGS3D.flip = None
+_CN.PGS3D.multi_sample = None
+_CN.PGS3D.confidence = None
 
 _CN.PGS2D3D = CN()
 _CN.PGS2D3D.enable = None
+_CN.PGS2D3D.enable_at = None
+_CN.PGS2D3D.flip = None
+_CN.PGS2D3D.multi_sample = None
+_CN.PGS2D3D.confidence = None
 
 _CN.LGS = CN()
 _CN.LGS.enable = None
+_CN.LGS.flip = None
 
 _CN.LGSV = CN()
 _CN.LGSV.enable = None
+_CN.LGSV.flip = None
 
 _CN.RESOLVE_SCALE = CN()
 _CN.RESOLVE_SCALE.enable = None
